@@ -70,6 +70,7 @@ static struct updatehub_context {
 	struct pollfd fds[1];
 	int sock;
 	int nfds;
+  struct sockaddr * addr;
 } ctx;
 
 static struct update_info {
@@ -167,7 +168,7 @@ static void cleanup_connection(void)
 
 static bool start_coap_client(void)
 {
-	struct addrinfo *addr;
+	struct addrinfo *addr = NULL;
 	struct addrinfo hints;
 	int resolve_attempts = 10;
 	int ret = -1;
@@ -192,25 +193,34 @@ static bool start_coap_client(void)
 	char port[] = "5683";
 #endif
 
-	while (resolve_attempts--) {
-		ret = getaddrinfo(UPDATEHUB_SERVER, port, &hints, &addr);
-		if (ret == 0) {
-			break;
-		}
-		k_sleep(K_SECONDS(1));
-	}
-	if (ret < 0) {
-		LOG_ERR("Could not resolve dns");
-		return false;
-	}
+  if (ctx.addr) {
+    ctx.sock = socket(ctx.addr->sa_family, SOCK_DGRAM, protocol);
+    if (ctx.sock < 0) {
+      LOG_ERR("Failed to create UDP socket from preshared addr");
+      goto error;
+    }
+  }
+  else {
+    while (resolve_attempts--) {
+      ret = getaddrinfo(UPDATEHUB_SERVER, port, &hints, &addr);
+      if (ret == 0) {
+        break;
+      }
+      k_sleep(K_SECONDS(1));
+    }
+    if (ret < 0) {
+      LOG_ERR("Could not resolve dns: %d", ret);
+      return false;
+    }
 
-	ret = 1;
+    ret = 1;
 
-	ctx.sock = socket(addr->ai_family, SOCK_DGRAM, protocol);
-	if (ctx.sock < 0) {
-		LOG_ERR("Failed to create UDP socket");
-		goto error;
-	}
+    ctx.sock = socket(addr->ai_family, SOCK_DGRAM, protocol);
+    if (ctx.sock < 0) {
+      LOG_ERR("Failed to create UDP socket");
+      goto error;
+    }
+  }
 
 	ret = -1;
 
@@ -227,18 +237,26 @@ static bool start_coap_client(void)
 	}
 #endif
 
-	if (connect(ctx.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-		LOG_ERR("Cannot connect to UDP remote");
-		goto error;
-	}
+  if (ctx.addr) {
+    if (connect(ctx.sock, ctx.addr, sizeof(struct sockaddr_in6)) < 0) {
+      LOG_ERR("Cannot connect to UDP remote");
+      goto error;
+    }
+  } else {
+    if (connect(ctx.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
+      LOG_ERR("Cannot connect to UDP remote");
+      goto error;
+    }
+  }
 
 	prepare_fds();
-
 	ret = 0;
 error:
-	freeaddrinfo(addr);
+  if (addr) {
+    freeaddrinfo(addr);
+  }
 
-	if (ret > 0) {
+  if (ret > 0) {
 		cleanup_connection();
 	}
 
@@ -1005,7 +1023,7 @@ static void autohandler(struct k_work *work)
 	k_work_reschedule(&updatehub_work_handle, UPDATEHUB_POLL_INTERVAL);
 }
 
-void z_impl_updatehub_autohandler(void)
+void z_impl_updatehub_autohandler(struct sockaddr * addr)
 {
 #if defined(CONFIG_UPDATEHUB_DOWNLOAD_SHA256_VERIFICATION)
 	LOG_INF("SHA-256 verification on download only");
@@ -1016,6 +1034,10 @@ void z_impl_updatehub_autohandler(void)
 #if defined(CONFIG_UPDATEHUB_DOWNLOAD_STORAGE_SHA256_VERIFICATION)
 	LOG_INF("SHA-256 verification on download and from flash");
 #endif
+
+  if (addr != NULL) {
+    ctx.addr = addr;
+  }
 
 	k_work_init_delayable(&updatehub_work_handle, autohandler);
 	k_work_reschedule(&updatehub_work_handle, K_NO_WAIT);

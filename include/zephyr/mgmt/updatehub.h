@@ -45,7 +45,7 @@ enum updatehub_response {
  * @details The updatehub_autohandler handles the whole process
  * in pre-determined time intervals.
  */
-__syscall void updatehub_autohandler(void);
+__syscall void updatehub_autohandler(struct sockaddr * addr);
 
 /**
  * @brief The UpdateHub probe verify if there is some update to be performed.
