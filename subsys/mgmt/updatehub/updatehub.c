@@ -1023,7 +1023,7 @@ static void autohandler(struct k_work *work)
 	k_work_reschedule(&updatehub_work_handle, UPDATEHUB_POLL_INTERVAL);
 }
 
-void z_impl_updatehub_autohandler(struct sockaddr * addr)
+void z_impl_updatehub_autohandler(void)
 {
 #if defined(CONFIG_UPDATEHUB_DOWNLOAD_SHA256_VERIFICATION)
 	LOG_INF("SHA-256 verification on download only");
@@ -1035,10 +1035,10 @@ void z_impl_updatehub_autohandler(struct sockaddr * addr)
 	LOG_INF("SHA-256 verification on download and from flash");
 #endif
 
-  if (addr != NULL) {
-    ctx.addr = addr;
-  }
-
 	k_work_init_delayable(&updatehub_work_handle, autohandler);
 	k_work_reschedule(&updatehub_work_handle, K_NO_WAIT);
+}
+
+void z_impl_updatehub_init(struct sockaddr * addr) {
+  ctx.addr = addr;
 }

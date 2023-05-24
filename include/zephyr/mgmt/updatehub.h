@@ -40,12 +40,20 @@ enum updatehub_response {
 };
 
 /**
+ * @brief Initializes updatehub with a host sockaddr
+ *
+ * @details Provides the internal updatehub context with an already resolved IP
+ * address, such that the updatehub engine does not need to resolve it on the fly.
+ */
+__syscall void updatehub_init(struct sockaddr * addr);
+
+/**
  * @brief Runs UpdateHub probe and UpdateHub update automatically.
  *
  * @details The updatehub_autohandler handles the whole process
  * in pre-determined time intervals.
  */
-__syscall void updatehub_autohandler(struct sockaddr * addr);
+__syscall void updatehub_autohandler(void);
 
 /**
  * @brief The UpdateHub probe verify if there is some update to be performed.
