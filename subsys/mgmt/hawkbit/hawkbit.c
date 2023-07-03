@@ -90,6 +90,7 @@ static struct hawkbit_context {
 	uint8_t recv_buf_tcp[RECV_BUFFER_SIZE];
 	enum hawkbit_response code_status;
 	bool final_data_received;
+  struct sockaddr * addr;
 } hb_context;
 
 static union {
@@ -203,7 +204,7 @@ static const struct json_obj_descr json_dep_fbk_descr[] = {
 static bool start_http_client(void)
 {
 	int ret = -1;
-	struct addrinfo *addr;
+	struct addrinfo *addr = NULL;
 	struct addrinfo hints;
 	int resolve_attempts = 10;
 
@@ -223,25 +224,35 @@ static bool start_http_client(void)
 		hints.ai_socktype = SOCK_STREAM;
 	}
 
-	while (resolve_attempts--) {
-		ret = getaddrinfo(CONFIG_HAWKBIT_SERVER, CONFIG_HAWKBIT_PORT, &hints, &addr);
-		if (ret == 0) {
-			break;
-		}
+  if (hb_context.addr) {
+    hb_context.sock = socket(hb_context.addr->sa_family, SOCK_DGRAM, protocol);
+    if (hb_context.sock < 0) {
+      LOG_ERR("Failed to create UDP socket from preshared addr");
+      goto err;
+    }
+  } else {
+    while (resolve_attempts--) {
+      ret = getaddrinfo(CONFIG_HAWKBIT_SERVER, CONFIG_HAWKBIT_PORT, &hints, &addr);
+      if (ret == 0) {
+        break;
+      }
 
-		k_sleep(K_MSEC(1));
-	}
+      k_sleep(K_MSEC(1));
+    }
 
-	if (ret != 0) {
-		LOG_ERR("Could not resolve dns: %d", ret);
-		return false;
-	}
+    if (ret != 0) {
+      LOG_ERR("Could not resolve dns: %d", ret);
+      return false;
+    }
 
-	hb_context.sock = socket(addr->ai_family, SOCK_STREAM, protocol);
-	if (hb_context.sock < 0) {
-		LOG_ERR("Failed to create TCP socket");
-		goto err;
-	}
+    ret = 1;
+
+    hb_context.sock = socket(addr->ai_family, SOCK_STREAM, protocol);
+    if (hb_context.sock < 0) {
+      LOG_ERR("Failed to create TCP socket");
+      goto err;
+    }
+  }
 
 #if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
 	sec_tag_t sec_tag_opt[] = {
@@ -260,18 +271,29 @@ static bool start_http_client(void)
 	}
 #endif
 
-	if (connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-		LOG_ERR("Failed to connect to server");
-		goto err_sock;
-	}
+  if (hb_context.addr) {
+    if (connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6)) < 0) {
+      LOG_ERR("Cannot connect to UDP remote");
+      goto err_sock;
+    }
+  } else {
+    if (connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
+      LOG_ERR("Cannot connect to UDP remote");
+      goto err_sock;
+    }
+  }
 
-	freeaddrinfo(addr);
+  if (addr) {
+    freeaddrinfo(addr);
+  }
 	return true;
 
 err_sock:
 	close(hb_context.sock);
 err:
-	freeaddrinfo(addr);
+  if (addr) {
+    freeaddrinfo(addr);
+  }
 	return false;
 }
 
@@ -566,12 +588,16 @@ static void hawkbit_dump_deployment(struct hawkbit_dep_res *d)
 	LOG_DBG("md5sum =%s", l->md5sum_http.href);
 }
 
-int hawkbit_init(void)
+int hawkbit_init(struct sockaddr * addr)
 {
 	bool image_ok;
 	int ret = 0, rc = 0;
 	struct flash_pages_info info;
 	int32_t action_id;
+
+  if (addr) {
+    hb_context.addr = addr;
+  }
 
 	fs.flash_device = STORAGE_DEV;
 	if (!device_is_ready(fs.flash_device)) {

@@ -40,7 +40,7 @@ enum hawkbit_response {
  *
  * @return 0 on success, negative on error.
  */
-int hawkbit_init(void);
+int hawkbit_init(struct sockaddr * addr);
 
 /**
  * @brief Runs hawkBit probe and hawkBit update automatically
