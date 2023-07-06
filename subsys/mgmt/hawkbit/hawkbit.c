@@ -224,10 +224,12 @@ static bool start_http_client(void)
 		hints.ai_socktype = SOCK_STREAM;
 	}
 
+  LOG_ERR("addr: %p", hb_context.addr);
+
   if (hb_context.addr) {
-    hb_context.sock = socket(hb_context.addr->sa_family, SOCK_DGRAM, protocol);
+    hb_context.sock = socket(hb_context.addr->sa_family, SOCK_STREAM, protocol);
     if (hb_context.sock < 0) {
-      LOG_ERR("Failed to create UDP socket from preshared addr");
+      LOG_ERR("Failed to create TCP socket from preshared addr");
       goto err;
     }
   } else {
@@ -272,13 +274,15 @@ static bool start_http_client(void)
 #endif
 
   if (hb_context.addr) {
-    if (connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6)) < 0) {
-      LOG_ERR("Cannot connect to UDP remote");
+    int ret = connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6));
+    //if (connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6)) < 0) {
+    if (ret < 0) {
+      LOG_ERR("Failed to connect to server: %d, %d", ret, errno);
       goto err_sock;
     }
   } else {
     if (connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-      LOG_ERR("Cannot connect to UDP remote");
+      LOG_ERR("Failed to connect to server");
       goto err_sock;
     }
   }
@@ -468,7 +472,6 @@ static int hawkbit_find_deployment_base(struct hawkbit_ctl_res *res, char *deplo
 		LOG_ERR("Missing deploymentBase/ in href %s", href);
 		return -EINVAL;
 	}
-
 	len = strlen(helper);
 	if (len > DEPLOYMENT_BASE_SIZE - 1) {
 		/* Lack of memory is an application error */
@@ -588,16 +591,12 @@ static void hawkbit_dump_deployment(struct hawkbit_dep_res *d)
 	LOG_DBG("md5sum =%s", l->md5sum_http.href);
 }
 
-int hawkbit_init(struct sockaddr * addr)
+int hawkbit_init(void)
 {
 	bool image_ok;
 	int ret = 0, rc = 0;
 	struct flash_pages_info info;
 	int32_t action_id;
-
-  if (addr) {
-    hb_context.addr = addr;
-  }
 
 	fs.flash_device = STORAGE_DEV;
 	if (!device_is_ready(fs.flash_device)) {
@@ -795,7 +794,7 @@ static void response_cb(struct http_response *rsp, enum http_final_call final_da
 
 		if (downloaded > hb_context.dl.download_progress) {
 			hb_context.dl.download_progress = downloaded;
-			LOG_DBG("Download percentage: %d%% ", hb_context.dl.download_progress);
+			LOG_DBG("Download percentage: %d %d%% ", hb_context.dl.downloaded_size, hb_context.dl.download_progress);
 		}
 
 		if (final_data == HTTP_DATA_FINAL) {
@@ -981,7 +980,7 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	return true;
 }
 
-enum hawkbit_response hawkbit_probe(void)
+enum hawkbit_response hawkbit_probe(struct sockaddr * addr)
 {
 	int ret;
 	int32_t action_id;
@@ -998,6 +997,9 @@ enum hawkbit_response hawkbit_probe(void)
 	}
 
 	memset(&hb_context, 0, sizeof(hb_context));
+  if (addr) {
+    hb_context.addr = addr;
+  }
 	hb_context.response_data = malloc(RESPONSE_BUFFER_SIZE);
 
 	if (!boot_is_img_confirmed()) {
@@ -1187,8 +1189,10 @@ enum hawkbit_response hawkbit_probe(void)
 	/* Verify the hash of the stored firmware */
 	fic.match = hb_context.dl.file_hash;
 	fic.clen = hb_context.dl.downloaded_size;
-	if (flash_img_check(&hb_context.flash_ctx, &fic, FIXED_PARTITION_ID(SLOT1_LABEL))) {
-		LOG_ERR("Firmware - flash validation has failed");
+	int err = flash_img_check(&hb_context.flash_ctx, &fic, FIXED_PARTITION_ID(SLOT1_LABEL));
+  if (err) {
+	//if (flash_img_check(&hb_context.flash_ctx, &fic, FIXED_PARTITION_ID(SLOT1_LABEL))) {
+		LOG_ERR("Firmware - flash validation has failed %d", err);
 		hb_context.code_status = HAWKBIT_DOWNLOAD_ERROR;
 		goto cleanup;
 	}
@@ -1217,7 +1221,7 @@ error:
 
 static void autohandler(struct k_work *work)
 {
-	switch (hawkbit_probe()) {
+	switch (hawkbit_probe(NULL)) {
 	case HAWKBIT_UNCONFIRMED_IMAGE:
 		LOG_ERR("Image is unconfirmed");
 		LOG_ERR("Rebooting to previous confirmed image");
