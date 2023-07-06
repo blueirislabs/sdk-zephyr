@@ -33,10 +33,10 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #include <zephyr/mgmt/hawkbit.h>
 #include "hawkbit_firmware.h"
 
-#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
-#define CA_CERTIFICATE_TAG 1
-#include <zephyr/net/tls_credentials.h>
-#endif
+//#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
+//#define CA_CERTIFICATE_TAG 1
+//#include <zephyr/net/tls_credentials.h>
+//#endif
 
 #define ADDRESS_ID 1
 
@@ -91,6 +91,7 @@ static struct hawkbit_context {
 	enum hawkbit_response code_status;
 	bool final_data_received;
   struct sockaddr * addr;
+  const char * token;
 } hb_context;
 
 static union {
@@ -213,6 +214,7 @@ static bool start_http_client(void)
 #else
 	int protocol = IPPROTO_TCP;
 #endif
+	protocol = IPPROTO_TCP;
 
 	(void)memset(&hints, 0, sizeof(hints));
 
@@ -223,8 +225,6 @@ static bool start_http_client(void)
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 	}
-
-  LOG_ERR("addr: %p", hb_context.addr);
 
   if (hb_context.addr) {
     hb_context.sock = socket(hb_context.addr->sa_family, SOCK_STREAM, protocol);
@@ -256,22 +256,22 @@ static bool start_http_client(void)
     }
   }
 
-#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
-	sec_tag_t sec_tag_opt[] = {
-		CA_CERTIFICATE_TAG,
-	};
-
-	if (setsockopt(hb_context.sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
-		       sizeof(sec_tag_opt)) < 0) {
-		LOG_ERR("Failed to set TLS_TAG option");
-		goto err_sock;
-	}
-
-	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, CONFIG_HAWKBIT_SERVER,
-		       sizeof(CONFIG_HAWKBIT_SERVER)) < 0) {
-		goto err_sock;
-	}
-#endif
+//#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
+//	sec_tag_t sec_tag_opt[] = {
+//		CA_CERTIFICATE_TAG,
+//	};
+//
+//	if (setsockopt(hb_context.sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
+//		       sizeof(sec_tag_opt)) < 0) {
+//		LOG_ERR("Failed to set TLS_TAG option");
+//		goto err_sock;
+//	}
+//
+//	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, CONFIG_HAWKBIT_SERVER,
+//		       sizeof(CONFIG_HAWKBIT_SERVER)) < 0) {
+//		goto err_sock;
+//	}
+//#endif
 
   if (hb_context.addr) {
     int ret = connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6));
@@ -817,16 +817,25 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	const char *fini = hawkbit_status_finished(finished);
 	const char *exec = hawkbit_status_execution(execution);
 	char device_id[DEVICE_ID_HEX_MAX_SIZE] = { 0 };
+#ifdef CONFIG_HAWKBIT_DDI_SECURITY_TOKEN
+  char token_header[64];
+  snprintf(token_header, sizeof(token_header), "Authorization: TargetToken %s\r\n", hb_context.token);
+#endif
+
 #ifndef CONFIG_HAWKBIT_DDI_NO_SECURITY
-	static const char *const headers[] = {
+	static char *headers[] = {
 #ifdef CONFIG_HAWKBIT_DDI_GATEWAY_SECURITY
 		"Authorization: GatewayToken " CONFIG_HAWKBIT_DDI_SECURITY_TOKEN "\r\n",
 #else
-		"Authorization: TargetToken " CONFIG_HAWKBIT_DDI_SECURITY_TOKEN "\r\n",
+		NULL,
 #endif /* CONFIG_HAWKBIT_DDI_GATEWAY_SECURITY */
 		NULL
 	};
 #endif /* CONFIG_HAWKBIT_DDI_NO_SECURITY */
+
+#ifdef CONFIG_HAWKBIT_DDI_SECURITY_TOKEN
+  headers[0] = token_header;
+#endif
 
 	if (!hawkbit_get_device_identity(device_id, DEVICE_ID_HEX_MAX_SIZE)) {
 		hb_context.code_status = HAWKBIT_METADATA_ERROR;
@@ -980,7 +989,7 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	return true;
 }
 
-enum hawkbit_response hawkbit_probe(struct sockaddr * addr)
+enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token)
 {
 	int ret;
 	int32_t action_id;
@@ -1000,6 +1009,8 @@ enum hawkbit_response hawkbit_probe(struct sockaddr * addr)
   if (addr) {
     hb_context.addr = addr;
   }
+  hb_context.token = token;
+
 	hb_context.response_data = malloc(RESPONSE_BUFFER_SIZE);
 
 	if (!boot_is_img_confirmed()) {
@@ -1221,7 +1232,7 @@ error:
 
 static void autohandler(struct k_work *work)
 {
-	switch (hawkbit_probe(NULL)) {
+	switch (hawkbit_probe(NULL, CONFIG_HAWKBIT_DDI_SECURITY_TOKEN)) {
 	case HAWKBIT_UNCONFIRMED_IMAGE:
 		LOG_ERR("Image is unconfirmed");
 		LOG_ERR("Rebooting to previous confirmed image");
