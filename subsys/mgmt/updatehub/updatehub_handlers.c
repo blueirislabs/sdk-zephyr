@@ -8,9 +8,9 @@
 #include <zephyr/mgmt/updatehub.h>
 
 
-static inline void z_vrfy_updatehub_autohandler(void)
+static inline void z_vrfy_updatehub_autohandler(struct sockaddr * addr)
 {
-	z_impl_updatehub_autohandler();
+	z_impl_updatehub_autohandler(addr);
 }
 #include <syscalls/updatehub_autohandler_mrsh.c>
 
