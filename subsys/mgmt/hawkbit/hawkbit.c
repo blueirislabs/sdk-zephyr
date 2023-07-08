@@ -33,10 +33,10 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #include <zephyr/mgmt/hawkbit.h>
 #include "hawkbit_firmware.h"
 
-#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
-#define CA_CERTIFICATE_TAG 1
-#include <zephyr/net/tls_credentials.h>
-#endif
+//#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
+//#define CA_CERTIFICATE_TAG 1
+//#include <zephyr/net/tls_credentials.h>
+//#endif
 
 #define ADDRESS_ID 1
 
@@ -208,11 +208,12 @@ static bool start_http_client(void)
 	struct addrinfo hints;
 	int resolve_attempts = 10;
 
-#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
-	int protocol = IPPROTO_TLS_1_2;
-#else
+//#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
+//	int protocol = IPPROTO_TLS_1_2;
+//#else
+//	int protocol = IPPROTO_TCP;
+//#endif
 	int protocol = IPPROTO_TCP;
-#endif
 
 	(void)memset(&hints, 0, sizeof(hints));
 
@@ -225,7 +226,7 @@ static bool start_http_client(void)
 	}
 
   if (hb_context.addr) {
-    hb_context.sock = socket(hb_context.addr->sa_family, SOCK_DGRAM, protocol);
+    hb_context.sock = socket(hb_context.addr->sa_family, SOCK_STREAM, protocol);
     if (hb_context.sock < 0) {
       LOG_ERR("Failed to create UDP socket from preshared addr");
       goto err;
@@ -254,31 +255,31 @@ static bool start_http_client(void)
     }
   }
 
-#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
-	sec_tag_t sec_tag_opt[] = {
-		CA_CERTIFICATE_TAG,
-	};
-
-	if (setsockopt(hb_context.sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
-		       sizeof(sec_tag_opt)) < 0) {
-		LOG_ERR("Failed to set TLS_TAG option");
-		goto err_sock;
-	}
-
-	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, CONFIG_HAWKBIT_SERVER,
-		       sizeof(CONFIG_HAWKBIT_SERVER)) < 0) {
-		goto err_sock;
-	}
-#endif
+//#if defined(CONFIG_NET_SOCKETS_SOCKOPT_TLS)
+//	sec_tag_t sec_tag_opt[] = {
+//		CA_CERTIFICATE_TAG,
+//	};
+//
+//	if (setsockopt(hb_context.sock, SOL_TLS, TLS_SEC_TAG_LIST, sec_tag_opt,
+//		       sizeof(sec_tag_opt)) < 0) {
+//		LOG_ERR("Failed to set TLS_TAG option");
+//		goto err_sock;
+//	}
+//
+//	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, CONFIG_HAWKBIT_SERVER,
+//		       sizeof(CONFIG_HAWKBIT_SERVER)) < 0) {
+//		goto err_sock;
+//	}
+//#endif
 
   if (hb_context.addr) {
     if (connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6)) < 0) {
-      LOG_ERR("Cannot connect to UDP remote");
+      LOG_ERR("Cannot connect to TCP remote: %d", errno);
       goto err_sock;
     }
   } else {
     if (connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
-      LOG_ERR("Cannot connect to UDP remote");
+      LOG_ERR("Cannot connect to TCP remote");
       goto err_sock;
     }
   }
@@ -588,16 +589,12 @@ static void hawkbit_dump_deployment(struct hawkbit_dep_res *d)
 	LOG_DBG("md5sum =%s", l->md5sum_http.href);
 }
 
-int hawkbit_init(struct sockaddr * addr)
+int hawkbit_init(void)
 {
 	bool image_ok;
 	int ret = 0, rc = 0;
 	struct flash_pages_info info;
 	int32_t action_id;
-
-  if (addr) {
-    hb_context.addr = addr;
-  }
 
 	fs.flash_device = STORAGE_DEV;
 	if (!device_is_ready(fs.flash_device)) {
@@ -981,7 +978,7 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	return true;
 }
 
-enum hawkbit_response hawkbit_probe(void)
+enum hawkbit_response hawkbit_probe(struct sockaddr * addr)
 {
 	int ret;
 	int32_t action_id;
@@ -998,6 +995,10 @@ enum hawkbit_response hawkbit_probe(void)
 	}
 
 	memset(&hb_context, 0, sizeof(hb_context));
+  if (addr) {
+    hb_context.addr = addr;
+  }
+
 	hb_context.response_data = malloc(RESPONSE_BUFFER_SIZE);
 
 	if (!boot_is_img_confirmed()) {
@@ -1217,7 +1218,7 @@ error:
 
 static void autohandler(struct k_work *work)
 {
-	switch (hawkbit_probe()) {
+	switch (hawkbit_probe(NULL)) {
 	case HAWKBIT_UNCONFIRMED_IMAGE:
 		LOG_ERR("Image is unconfirmed");
 		LOG_ERR("Rebooting to previous confirmed image");
