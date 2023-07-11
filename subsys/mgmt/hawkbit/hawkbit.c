@@ -55,7 +55,7 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #define SLOT1_LABEL slot1_partition
 #define SLOT1_SIZE FIXED_PARTITION_SIZE(SLOT1_LABEL)
 
-#define STORAGE_LABEL storage_partition
+#define STORAGE_LABEL hawkbit_storage
 #define STORAGE_DEV FIXED_PARTITION_DEVICE(STORAGE_LABEL)
 #define STORAGE_OFFSET FIXED_PARTITION_OFFSET(STORAGE_LABEL)
 
@@ -613,6 +613,7 @@ int hawkbit_init(void)
 
 	fs.sector_size = info.size;
 	fs.sector_count = 3U;
+  LOG_INF("NVS start address: 0x%lx, sector size 0x%x", fs.offset, fs.sector_size);
 
 	rc = nvs_mount(&fs);
 	if (rc) {
@@ -621,8 +622,11 @@ int hawkbit_init(void)
 	}
 
 	rc = nvs_read(&fs, ADDRESS_ID, &action_id, sizeof(action_id));
-	LOG_DBG("Action id: current %d", action_id);
-
+  if (rc < 0) {
+    LOG_DBG("No Action id found %d", rc);
+  } else {
+	  LOG_DBG("Action id: current %d", action_id);
+  }
 	image_ok = boot_is_img_confirmed();
 	LOG_INF("Image is%s confirmed OK", image_ok ? "" : " not");
 	if (!image_ok) {
