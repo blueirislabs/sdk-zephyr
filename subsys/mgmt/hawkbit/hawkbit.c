@@ -55,10 +55,6 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #define SLOT1_LABEL slot1_partition
 #define SLOT1_SIZE FIXED_PARTITION_SIZE(SLOT1_LABEL)
 
-#define STORAGE_LABEL storage_partition
-#define STORAGE_DEV FIXED_PARTITION_DEVICE(STORAGE_LABEL)
-#define STORAGE_OFFSET FIXED_PARTITION_OFFSET(STORAGE_LABEL)
-
 #if ((CONFIG_HAWKBIT_POLL_INTERVAL > 1) && (CONFIG_HAWKBIT_POLL_INTERVAL < 43200))
 static uint32_t poll_sleep = (CONFIG_HAWKBIT_POLL_INTERVAL * 60 * MSEC_PER_SEC);
 #else
@@ -92,6 +88,7 @@ static struct hawkbit_context {
 	bool final_data_received;
   struct sockaddr * addr;
   const char * token;
+  int32_t final_action_id;
 } hb_context;
 
 static union {
@@ -362,15 +359,15 @@ static const char *hawkbit_status_execution(enum hawkbit_status_exec e)
 	}
 }
 
+int hawkbit_get_action_id(void) {
+  return hb_context.final_action_id;
+}
+
 static int hawkbit_device_acid_update(int32_t new_value)
 {
 	int ret;
 
-	ret = nvs_write(&fs, ADDRESS_ID, &new_value, sizeof(new_value));
-	if (ret < 0) {
-		LOG_ERR("Failed to write device id: %d", ret);
-		return -EIO;
-	}
+  hb_context.final_action_id = new_value;
 
 	return 0;
 }
@@ -596,32 +593,6 @@ int hawkbit_init(void)
 	bool image_ok;
 	int ret = 0, rc = 0;
 	struct flash_pages_info info;
-	int32_t action_id;
-
-	fs.flash_device = STORAGE_DEV;
-	if (!device_is_ready(fs.flash_device)) {
-		LOG_ERR("Flash device not ready");
-		return -ENODEV;
-	}
-
-	fs.offset = STORAGE_OFFSET;
-	rc = flash_get_page_info_by_offs(fs.flash_device, fs.offset, &info);
-	if (rc) {
-		LOG_ERR("Unable to get storage page info: %d", rc);
-		return -EIO;
-	}
-
-	fs.sector_size = info.size;
-	fs.sector_count = 3U;
-
-	rc = nvs_mount(&fs);
-	if (rc) {
-		LOG_ERR("Storage flash mount failed: %d", rc);
-		return rc;
-	}
-
-	rc = nvs_read(&fs, ADDRESS_ID, &action_id, sizeof(action_id));
-	LOG_DBG("Action id: current %d", action_id);
 
 	image_ok = boot_is_img_confirmed();
 	LOG_INF("Image is%s confirmed OK", image_ok ? "" : " not");
@@ -989,10 +960,9 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	return true;
 }
 
-enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token)
+enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token, int32_t action_id)
 {
 	int ret;
-	int32_t action_id;
 	int32_t file_size = 0;
 	struct flash_img_check fic;
 	char device_id[DEVICE_ID_HEX_MAX_SIZE] = { 0 },
@@ -1006,6 +976,9 @@ enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token)
 	}
 
 	memset(&hb_context, 0, sizeof(hb_context));
+
+  hb_context.final_action_id = action_id;
+
   if (addr) {
     hb_context.addr = addr;
   }
@@ -1144,9 +1117,7 @@ enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token)
 		goto cleanup;
 	}
 
-	nvs_read(&fs, ADDRESS_ID, &action_id, sizeof(action_id));
-
-	if (action_id == (int32_t)hb_context.json_action_id) {
+	if (hb_context.final_action_id == (int32_t)hb_context.json_action_id) {
 		LOG_INF("Preventing repeated attempt to install %d", hb_context.json_action_id);
 		hb_context.dl.http_content_size = 0;
 		memset(hb_context.url_buffer, 0, sizeof(hb_context.url_buffer));
@@ -1232,7 +1203,7 @@ error:
 
 static void autohandler(struct k_work *work)
 {
-	switch (hawkbit_probe(NULL, CONFIG_HAWKBIT_DDI_SECURITY_TOKEN)) {
+	switch (hawkbit_probe(NULL, CONFIG_HAWKBIT_DDI_SECURITY_TOKEN, 0)) {
 	case HAWKBIT_UNCONFIRMED_IMAGE:
 		LOG_ERR("Image is unconfirmed");
 		LOG_ERR("Rebooting to previous confirmed image");

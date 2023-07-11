@@ -60,7 +60,7 @@ void hawkbit_autohandler(void);
  * @return HAWKBIT_OK if success.
  * @return HAWKBIT_DOWNLOAD_ERROR fail while downloading the update package.
  */
-enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token);
+enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token, int32_t action_id);
 
 /**
  * @}
