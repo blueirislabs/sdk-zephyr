@@ -794,6 +794,13 @@ static void response_cb(struct http_response *rsp, enum http_final_call final_da
 
 		hb_context.dl.downloaded_size = flash_img_bytes_written(&hb_context.flash_ctx);
 
+    if (hb_context.dl.http_content_size <= 0) {
+			LOG_ERR("HTTP content length error: %d", hb_context.dl.http_content_size);
+      hb_context.code_status = HAWKBIT_DOWNLOAD_ERROR;
+
+      break;
+    }
+
 		downloaded = hb_context.dl.downloaded_size * 100 / hb_context.dl.http_content_size;
 
 		if (downloaded > hb_context.dl.download_progress) {
