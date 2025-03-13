@@ -32,9 +32,6 @@
 #include <zephyr/bluetooth/rfcomm.h>
 #include <zephyr/bluetooth/sdp.h>
 #include <zephyr/bluetooth/iso.h>
-#include <zephyr/bluetooth/audio/audio.h>
-#include <zephyr/bluetooth/audio/pacs.h>
-#include <zephyr/bluetooth/audio/csip.h>
 
 #include <zephyr/shell/shell.h>
 
@@ -68,6 +65,10 @@ static struct bt_conn_auth_info_cb auth_info_cb;
 
 #define KEY_STR_LEN 33
 
+#define ADV_DATA_DELIMITER ", "
+
+#define AD_SIZE 9
+
 /*
  * Based on the maximum number of parameters for HCI_LE_Generate_DHKey
  * See BT Core Spec V5.2 Vol. 4, Part E, section 7.8.37
@@ -98,10 +99,14 @@ static const char *phy2str(uint8_t phy)
 {
 	switch (phy) {
 	case 0: return "No packets";
-	case BT_GAP_LE_PHY_1M: return "LE 1M";
-	case BT_GAP_LE_PHY_2M: return "LE 2M";
-	case BT_GAP_LE_PHY_CODED: return "LE Coded";
-	default: return "Unknown";
+	case BT_GAP_LE_PHY_1M:
+		return "LE 1M";
+	case BT_GAP_LE_PHY_2M:
+		return "LE 2M";
+	case BT_GAP_LE_PHY_CODED:
+		return "LE Coded";
+	default:
+		return "Unknown";
 	}
 }
 #endif
@@ -122,6 +127,67 @@ static void print_le_addr(const char *desc, const bt_addr_le_t *addr)
 }
 #endif /* CONFIG_BT_CONN || (CONFIG_BT_BROADCASTER && CONFIG_BT_EXT_ADV) */
 
+#if defined(CONFIG_BT_TRANSMIT_POWER_CONTROL)
+static const char *tx_power_flag2str(int8_t flag)
+{
+	switch (flag) {
+	case 0:
+		return "Neither Max nor Min Tx Power";
+	case 1:
+		return "Tx Power Level is at minimum";
+	case 2:
+		return "Tx Power Level is at maximum";
+	/* Current Tx Power Level is the only available one*/
+	case 3:
+		return "Tx Power Level is at minimum & maximum.";
+	default:
+		return "Unknown";
+	}
+}
+
+static const char *tx_power_report_reason2str(uint8_t reason)
+{
+	switch (reason) {
+	case BT_HCI_LE_TX_POWER_REPORT_REASON_LOCAL_CHANGED:
+		return "Local Tx Power changed";
+	case BT_HCI_LE_TX_POWER_REPORT_REASON_REMOTE_CHANGED:
+		return "Remote Tx Power changed";
+	case BT_HCI_LE_TX_POWER_REPORT_REASON_READ_REMOTE_COMPLETED:
+		return "Completed to read remote Tx Power";
+	default:
+		return "Unknown";
+	}
+}
+
+static const char *tx_pwr_ctrl_phy2str(enum bt_conn_le_tx_power_phy phy)
+{
+	switch (phy) {
+	case BT_CONN_LE_TX_POWER_PHY_NONE:
+		return "None";
+	case BT_CONN_LE_TX_POWER_PHY_1M:
+		return "LE 1M";
+	case BT_CONN_LE_TX_POWER_PHY_2M:
+		return "LE 2M";
+	case BT_CONN_LE_TX_POWER_PHY_CODED_S8:
+		return "LE Coded S8";
+	case BT_CONN_LE_TX_POWER_PHY_CODED_S2:
+		return "LE Coded S2";
+	default:
+		return "Unknown";
+	}
+}
+
+static const char *enabled2str(bool enabled)
+{
+	if (enabled) {
+		return "Enabled";
+	} else {
+		return "Disabled";
+	}
+}
+
+#endif /* CONFIG_BT_TRANSMIT_POWER_CONTROL */
+
 #if defined(CONFIG_BT_CENTRAL)
 static int cmd_scan_off(const struct shell *sh);
 static int cmd_connect_le(const struct shell *sh, size_t argc, char *argv[]);
@@ -139,7 +205,7 @@ static struct bt_auto_connect {
 static struct bt_scan_filter {
 	char name[NAME_LEN];
 	bool name_set;
-	char addr[18]; /* fits xx:xx:xx:xx:xx:xx\0 */
+	char addr[BT_ADDR_STR_LEN];
 	bool addr_set;
 	int8_t rssi;
 	bool rssi_set;
@@ -147,6 +213,8 @@ static struct bt_scan_filter {
 	bool pa_interval_set;
 } scan_filter;
 
+static const char scan_response_label[] = "[DEVICE]: ";
+static bool scan_verbose_output;
 
 /**
  * @brief Compares two strings without case sensitivy
@@ -166,7 +234,7 @@ static bool is_substring(const char *substr, const char *str)
 	}
 
 	for (size_t pos = 0; pos < str_len; pos++) {
-		if (tolower(substr[0]) == tolower(str[pos])) {
+		if (tolower(substr[pos]) == tolower(str[pos])) {
 			if (pos + sub_str_len > str_len) {
 				return false;
 			}
@@ -187,6 +255,7 @@ static bool data_cb(struct bt_data *data, void *user_data)
 	switch (data->type) {
 	case BT_DATA_NAME_SHORTENED:
 	case BT_DATA_NAME_COMPLETE:
+	case BT_DATA_BROADCAST_NAME:
 		memcpy(name, data->data, MIN(data->data_len, NAME_LEN - 1));
 		return false;
 	default:
@@ -194,38 +263,219 @@ static bool data_cb(struct bt_data *data, void *user_data)
 	}
 }
 
-static void scan_recv(const struct bt_le_scan_recv_info *info,
-		      struct net_buf_simple *buf)
+static void print_data_hex(const uint8_t *data, uint8_t len, enum shell_vt100_color color)
 {
-	char le_addr[BT_ADDR_LE_STR_LEN];
-	char name[NAME_LEN];
+	if (len == 0)
+		return;
 
-	if (scan_filter.rssi_set && (scan_filter.rssi > info->rssi)) {
+	shell_fprintf(ctx_shell, color, "0x");
+	/* Reverse the byte order when printing as advertising data is LE
+	 * and the MSB should be first in the printed output.
+	 */
+	for (int16_t i = len - 1; i >= 0; i--) {
+		shell_fprintf(ctx_shell, color, "%02x", data[i]);
+	}
+}
+
+static void print_data_set(uint8_t set_value_len,
+			   const uint8_t *scan_data, uint8_t scan_data_len)
+{
+	uint8_t idx = 0;
+
+	if (scan_data_len == 0 || set_value_len > scan_data_len) {
 		return;
 	}
 
-	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
+	do {
+		if (idx > 0) {
+			shell_fprintf(ctx_shell, SHELL_INFO, ADV_DATA_DELIMITER);
+		}
 
-	if (scan_filter.addr_set && !is_substring(scan_filter.addr, le_addr)) {
+		print_data_hex(&scan_data[idx], set_value_len, SHELL_INFO);
+		idx += set_value_len;
+	} while (idx + set_value_len <= scan_data_len);
+
+	if (idx < scan_data_len) {
+		shell_fprintf(ctx_shell, SHELL_WARNING, " Excess data: ");
+		print_data_hex(&scan_data[idx], scan_data_len - idx, SHELL_WARNING);
+	}
+}
+
+static bool data_verbose_cb(struct bt_data *data, void *user_data)
+{
+	shell_fprintf(ctx_shell, SHELL_INFO, "%*sType 0x%02x: ",
+		      strlen(scan_response_label), "", data->type);
+
+	switch (data->type) {
+	case BT_DATA_UUID16_SOME:
+	case BT_DATA_UUID16_ALL:
+	case BT_DATA_SOLICIT16:
+		print_data_set(BT_UUID_SIZE_16, data->data, data->data_len);
+		break;
+	case BT_DATA_SVC_DATA16:
+		/* Data starts with a UUID16 (2 bytes),
+		 * the rest is unknown and printed as single bytes
+		 */
+		if (data->data_len < BT_UUID_SIZE_16) {
+			shell_fprintf(ctx_shell, SHELL_WARNING,
+				      "BT_DATA_SVC_DATA16 data length too short (%u)",
+				      data->data_len);
+			break;
+		}
+		print_data_set(BT_UUID_SIZE_16, data->data, BT_UUID_SIZE_16);
+		if (data->data_len > BT_UUID_SIZE_16) {
+			shell_fprintf(ctx_shell, SHELL_INFO, ADV_DATA_DELIMITER);
+			print_data_set(1, data->data + BT_UUID_SIZE_16,
+				       data->data_len - BT_UUID_SIZE_16);
+		}
+		break;
+	case BT_DATA_UUID32_SOME:
+	case BT_DATA_UUID32_ALL:
+		print_data_set(BT_UUID_SIZE_32, data->data, data->data_len);
+		break;
+	case BT_DATA_SVC_DATA32:
+		/* Data starts with a UUID32 (4 bytes),
+		 * the rest is unknown and printed as single bytes
+		 */
+		if (data->data_len < BT_UUID_SIZE_32) {
+			shell_fprintf(ctx_shell, SHELL_WARNING,
+				      "BT_DATA_SVC_DATA32 data length too short (%u)",
+				      data->data_len);
+			break;
+		}
+		print_data_set(BT_UUID_SIZE_32, data->data, BT_UUID_SIZE_32);
+		if (data->data_len > BT_UUID_SIZE_32) {
+			shell_fprintf(ctx_shell, SHELL_INFO, ADV_DATA_DELIMITER);
+			print_data_set(1, data->data + BT_UUID_SIZE_32,
+				       data->data_len - BT_UUID_SIZE_32);
+		}
+		break;
+	case BT_DATA_UUID128_SOME:
+	case BT_DATA_UUID128_ALL:
+	case BT_DATA_SOLICIT128:
+		print_data_set(BT_UUID_SIZE_128, data->data, data->data_len);
+		break;
+	case BT_DATA_SVC_DATA128:
+		/* Data starts with a UUID128 (16 bytes),
+		 * the rest is unknown and printed as single bytes
+		 */
+		if (data->data_len < BT_UUID_SIZE_128) {
+			shell_fprintf(ctx_shell, SHELL_WARNING,
+				      "BT_DATA_SVC_DATA128 data length too short (%u)",
+				      data->data_len);
+			break;
+		}
+		print_data_set(BT_UUID_SIZE_128, data->data, BT_UUID_SIZE_128);
+		if (data->data_len > BT_UUID_SIZE_128) {
+			shell_fprintf(ctx_shell, SHELL_INFO, ADV_DATA_DELIMITER);
+			print_data_set(1, data->data + BT_UUID_SIZE_128,
+				       data->data_len - BT_UUID_SIZE_128);
+		}
+		break;
+	case BT_DATA_NAME_SHORTENED:
+	case BT_DATA_NAME_COMPLETE:
+	case BT_DATA_BROADCAST_NAME:
+		shell_fprintf(ctx_shell, SHELL_INFO, "%.*s", data->data_len, data->data);
+		break;
+	case BT_DATA_PUB_TARGET_ADDR:
+	case BT_DATA_RAND_TARGET_ADDR:
+	case BT_DATA_LE_BT_DEVICE_ADDRESS:
+		print_data_set(BT_ADDR_SIZE, data->data, data->data_len);
+		break;
+	case BT_DATA_CSIS_RSI:
+		print_data_set(3, data->data, data->data_len);
+		break;
+	default:
+		print_data_set(1, data->data, data->data_len);
+	}
+
+	shell_fprintf(ctx_shell, SHELL_INFO, "\n");
+
+	return true;
+}
+
+static const char *scan_response_type_txt(uint8_t type)
+{
+	switch (type) {
+	case BT_GAP_ADV_TYPE_ADV_IND:
+		return "ADV_IND";
+	case BT_GAP_ADV_TYPE_ADV_DIRECT_IND:
+		return "ADV_DIRECT_IND";
+	case BT_GAP_ADV_TYPE_ADV_SCAN_IND:
+		return "ADV_SCAN_IND";
+	case BT_GAP_ADV_TYPE_ADV_NONCONN_IND:
+		return "ADV_NONCONN_IND";
+	case BT_GAP_ADV_TYPE_SCAN_RSP:
+		return "SCAN_RSP";
+	case BT_GAP_ADV_TYPE_EXT_ADV:
+		return "EXT_ADV";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+bool passes_scan_filter(const struct bt_le_scan_recv_info *info, const struct net_buf_simple *buf)
+{
+
+	if (scan_filter.rssi_set && (scan_filter.rssi > info->rssi)) {
+		return false;
+	}
+
+	if (scan_filter.pa_interval_set &&
+	    (scan_filter.pa_interval > BT_CONN_INTERVAL_TO_MS(info->interval))) {
+		return false;
+	}
+
+	if (scan_filter.addr_set) {
+		char le_addr[BT_ADDR_LE_STR_LEN] = {0};
+
+		bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
+
+		if (!is_substring(scan_filter.addr, le_addr)) {
+			return false;
+		}
+	}
+
+	if (scan_filter.name_set) {
+		struct net_buf_simple buf_copy;
+		char name[NAME_LEN] = {0};
+
+		/* call to bt_data_parse consumes netbufs so shallow clone for verbose output */
+		net_buf_simple_clone(buf, &buf_copy);
+		bt_data_parse(&buf_copy, data_cb, name);
+
+		if (!is_substring(scan_filter.name, name)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
+{
+	char le_addr[BT_ADDR_LE_STR_LEN];
+	char name[NAME_LEN];
+	struct net_buf_simple buf_copy;
+
+	if (!passes_scan_filter(info, buf)) {
 		return;
+	}
+
+	if (scan_verbose_output) {
+		/* call to bt_data_parse consumes netbufs so shallow clone for verbose output */
+		net_buf_simple_clone(buf, &buf_copy);
 	}
 
 	(void)memset(name, 0, sizeof(name));
 
 	bt_data_parse(buf, data_cb, name);
+	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	if (scan_filter.name_set && !is_substring(scan_filter.name, name)) {
-		return;
-	}
-
-	if (scan_filter.pa_interval_set &&
-	    (scan_filter.pa_interval > BT_CONN_INTERVAL_TO_MS(info->interval))) {
-		return;
-	}
-
-	shell_print(ctx_shell, "[DEVICE]: %s, AD evt type %u, RSSI %i %s "
+	shell_print(ctx_shell, "%s%s, AD evt type %u, RSSI %i %s "
 		    "C:%u S:%u D:%d SR:%u E:%u Prim: %s, Secn: %s, "
 		    "Interval: 0x%04x (%u us), SID: 0x%x",
+		    scan_response_label,
 		    le_addr, info->adv_type, info->rssi, name,
 		    (info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0,
 		    (info->adv_props & BT_GAP_ADV_PROP_SCANNABLE) != 0,
@@ -236,13 +486,22 @@ static void scan_recv(const struct bt_le_scan_recv_info *info,
 		    info->interval, BT_CONN_INTERVAL_TO_US(info->interval),
 		    info->sid);
 
+	if (scan_verbose_output) {
+		shell_info(ctx_shell,
+			   "%*s[SCAN DATA START - %s]",
+			   strlen(scan_response_label), "",
+			   scan_response_type_txt(info->adv_type));
+		bt_data_parse(&buf_copy, data_verbose_cb, NULL);
+		shell_info(ctx_shell, "%*s[SCAN DATA END]", strlen(scan_response_label), "");
+	}
+
 	/* Store address for later use */
 #if defined(CONFIG_BT_CENTRAL)
 	auto_connect.addr_set = true;
 	bt_addr_le_copy(&auto_connect.addr, info->addr);
 
 	/* Use the above auto_connect.addr address to automatically connect */
-	if (auto_connect.connect_name) {
+	if ((info->adv_props & BT_GAP_ADV_PROP_CONNECTABLE) != 0U && auto_connect.connect_name) {
 		auto_connect.connect_name = false;
 
 		cmd_scan_off(ctx_shell);
@@ -373,6 +632,8 @@ void conn_addr_str(struct bt_conn *conn, char *addr, size_t len)
 	case BT_CONN_TYPE_LE:
 		bt_addr_le_to_str(info.le.dst, addr, len);
 		break;
+	default:
+		break;
 	}
 }
 
@@ -395,6 +656,8 @@ static void print_le_oob(const struct shell *sh, struct bt_le_oob *oob)
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
+	struct bt_conn_info info;
+	int info_err;
 
 	conn_addr_str(conn, addr, sizeof(addr));
 
@@ -406,8 +669,22 @@ static void connected(struct bt_conn *conn, uint8_t err)
 
 	shell_print(ctx_shell, "Connected: %s", addr);
 
-	if (!default_conn) {
+	info_err = bt_conn_get_info(conn, &info);
+	if (info_err != 0) {
+		shell_error(ctx_shell, "Failed to connection information: %d", info_err);
+		goto done;
+	}
+
+	if (info.role == BT_CONN_ROLE_CENTRAL) {
+		if (default_conn != NULL) {
+			bt_conn_unref(default_conn);
+		}
+
 		default_conn = bt_conn_ref(conn);
+	} else if (info.role == BT_CONN_ROLE_PERIPHERAL) {
+		if (default_conn == NULL) {
+			default_conn = bt_conn_ref(conn);
+		}
 	}
 
 done:
@@ -415,6 +692,30 @@ done:
 	if (pairing_conn) {
 		bt_conn_unref(pairing_conn);
 		pairing_conn = NULL;
+	}
+}
+
+static void disconnected_set_new_default_conn_cb(struct bt_conn *conn, void *user_data)
+{
+	struct bt_conn_info info;
+
+	if (default_conn != NULL) {
+		/* nop */
+		return;
+	}
+
+	if (bt_conn_get_info(conn, &info) != 0) {
+		shell_error(ctx_shell, "Unable to get info: conn %p", conn);
+		return;
+	}
+
+	if (info.state == BT_CONN_STATE_CONNECTED) {
+		char addr_str[BT_ADDR_LE_STR_LEN];
+
+		default_conn = bt_conn_ref(conn);
+
+		bt_addr_le_to_str(info.le.dst, addr_str, sizeof(addr_str));
+		shell_print(ctx_shell, "Selected conn is now: %s", addr_str);
 	}
 }
 
@@ -428,6 +729,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	if (default_conn == conn) {
 		bt_conn_unref(default_conn);
 		default_conn = NULL;
+
+		/* If we are connected to other devices, set one of them as default */
+		bt_conn_foreach(BT_CONN_TYPE_LE, disconnected_set_new_default_conn_cb, NULL);
 	}
 }
 
@@ -570,6 +874,19 @@ void le_phy_updated(struct bt_conn *conn,
 }
 #endif
 
+#if defined(CONFIG_BT_TRANSMIT_POWER_CONTROL)
+void tx_power_report(struct bt_conn *conn,
+		    const struct bt_conn_le_tx_power_report *report)
+{
+	shell_print(ctx_shell, "Tx Power Report: Reason: %s, PHY: %s, Tx Power Level: %d",
+		    tx_power_report_reason2str(report->reason), tx_pwr_ctrl_phy2str(report->phy),
+		    report->tx_power_level);
+	shell_print(ctx_shell, "Tx Power Level Flag Info: %s, Delta: %d",
+		    tx_power_flag2str(report->tx_power_level_flag), report->delta);
+}
+#endif
+
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = connected,
 	.disconnected = disconnected,
@@ -589,6 +906,9 @@ static struct bt_conn_cb conn_callbacks = {
 #endif
 #if defined(CONFIG_BT_USER_PHY_UPDATE)
 	.le_phy_updated = le_phy_updated,
+#endif
+#if defined(CONFIG_BT_TRANSMIT_POWER_CONTROL)
+	.tx_power_report = tx_power_report,
 #endif
 };
 #endif /* CONFIG_BT_CONN */
@@ -619,26 +939,27 @@ static struct bt_le_ext_adv_cb adv_callbacks = {
 
 #if defined(CONFIG_BT_PER_ADV_SYNC)
 struct bt_le_per_adv_sync *per_adv_syncs[CONFIG_BT_PER_ADV_SYNC_MAX];
+size_t selected_per_adv_sync;
 
 static void per_adv_sync_sync_cb(struct bt_le_per_adv_sync *sync,
 				 struct bt_le_per_adv_sync_synced_info *info)
 {
+	const bool is_past_peer = info->conn != NULL;
 	char le_addr[BT_ADDR_LE_STR_LEN];
 	char past_peer[BT_ADDR_LE_STR_LEN];
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
-	if (info->conn) {
+	if (is_past_peer) {
 		conn_addr_str(info->conn, past_peer, sizeof(past_peer));
-	} else {
-		memset(past_peer, 0, sizeof(past_peer));
 	}
 
 	shell_print(ctx_shell, "PER_ADV_SYNC[%u]: [DEVICE]: %s synced, "
 		    "Interval 0x%04x (%u us), PHY %s, SD 0x%04X, PAST peer %s",
 		    bt_le_per_adv_sync_get_index(sync), le_addr,
 		    info->interval, BT_CONN_INTERVAL_TO_US(info->interval),
-		    phy2str(info->phy), info->service_data, past_peer);
+		    phy2str(info->phy), info->service_data,
+		    is_past_peer ? past_peer : "not present");
 
 	if (info->conn) { /* if from PAST */
 		for (int i = 0; i < ARRAY_SIZE(per_adv_syncs); i++) {
@@ -1137,6 +1458,23 @@ static int cmd_scan(const struct shell *sh, size_t argc, char *argv[])
 	return 0;
 }
 
+static int cmd_scan_verbose_output(const struct shell *sh, size_t argc, char *argv[])
+{
+	const char *verbose_state;
+
+	verbose_state = argv[1];
+	if (!strcmp(verbose_state, "on")) {
+		scan_verbose_output = true;
+	} else if (!strcmp(verbose_state, "off")) {
+		scan_verbose_output = false;
+	} else {
+		shell_help(sh);
+		return SHELL_CMD_HELP_PRINTED;
+	}
+
+	return 0;
+}
+
 static int cmd_scan_filter_set_name(const struct shell *sh, size_t argc,
 				    char *argv[])
 {
@@ -1157,10 +1495,11 @@ static int cmd_scan_filter_set_name(const struct shell *sh, size_t argc,
 static int cmd_scan_filter_set_addr(const struct shell *sh, size_t argc,
 				    char *argv[])
 {
+	const size_t max_cpy_len = sizeof(scan_filter.addr) - 1;
 	const char *addr_arg = argv[1];
 
 	/* Validate length including null terminator. */
-	if (strlen(addr_arg) >= sizeof(scan_filter.addr)) {
+	if (strlen(addr_arg) > max_cpy_len) {
 		shell_error(ctx_shell, "Invalid address string: %s\n",
 			    addr_arg);
 		return -ENOEXEC;
@@ -1179,7 +1518,8 @@ static int cmd_scan_filter_set_addr(const struct shell *sh, size_t argc,
 		}
 	}
 
-	strcpy(scan_filter.addr, addr_arg);
+	strncpy(scan_filter.addr, addr_arg, max_cpy_len);
+	scan_filter.addr[max_cpy_len] = '\0'; /* ensure NULL termination */
 	scan_filter.addr_set = true;
 
 	return 0;
@@ -1274,11 +1614,11 @@ static int cmd_scan_filter_clear_addr(const struct shell *sh, size_t argc,
 
 #if defined(CONFIG_BT_BROADCASTER)
 static ssize_t ad_init(struct bt_data *data_array, const size_t data_array_size,
-		       const atomic_t *adv_opt)
+		       const atomic_t *adv_options)
 {
-	const bool discoverable = atomic_test_bit(adv_opt, SHELL_ADV_OPT_DISCOVERABLE);
-	const bool appearance = atomic_test_bit(adv_opt, SHELL_ADV_OPT_APPEARANCE);
-	const bool adv_ext = atomic_test_bit(adv_opt, SHELL_ADV_OPT_EXT_ADV);
+	const bool discoverable = atomic_test_bit(adv_options, SHELL_ADV_OPT_DISCOVERABLE);
+	const bool appearance = atomic_test_bit(adv_options, SHELL_ADV_OPT_APPEARANCE);
+	const bool adv_ext = atomic_test_bit(adv_options, SHELL_ADV_OPT_EXT_ADV);
 	static uint8_t ad_flags;
 	size_t ad_len = 0;
 
@@ -1307,11 +1647,11 @@ static ssize_t ad_init(struct bt_data *data_array, const size_t data_array_size,
 	}
 
 	if (appearance) {
-		const uint16_t appearance = bt_get_appearance();
-		static uint8_t appearance_data[sizeof(appearance)];
+		const uint16_t appearance2 = bt_get_appearance();
+		static uint8_t appearance_data[sizeof(appearance2)];
 
 		__ASSERT(data_array_size > ad_len, "No space for appearance");
-		sys_put_le16(appearance, appearance_data);
+		sys_put_le16(appearance2, appearance_data);
 		data_array[ad_len].type = BT_DATA_GAP_APPEARANCE;
 		data_array[ad_len].data_len = sizeof(appearance_data);
 		data_array[ad_len].data = appearance_data;
@@ -1332,7 +1672,7 @@ static ssize_t ad_init(struct bt_data *data_array, const size_t data_array_size,
 	}
 
 	if (IS_ENABLED(CONFIG_BT_AUDIO) && IS_ENABLED(CONFIG_BT_EXT_ADV) && adv_ext) {
-		const bool connectable = atomic_test_bit(adv_opt, SHELL_ADV_OPT_CONNECTABLE);
+		const bool connectable = atomic_test_bit(adv_options, SHELL_ADV_OPT_CONNECTABLE);
 		ssize_t audio_ad_len;
 
 		audio_ad_len = audio_ad_data_add(&data_array[ad_len], data_array_size - ad_len,
@@ -1645,11 +1985,12 @@ static int cmd_adv_data(const struct shell *sh, size_t argc, char *argv[])
 	static uint8_t hex_data[1650];
 	bool appearance = false;
 	struct bt_data *data;
-	struct bt_data ad[9];
-	struct bt_data sd[9];
+	struct bt_data ad[AD_SIZE];
+	struct bt_data sd[AD_SIZE];
 	size_t hex_data_len;
 	size_t ad_len = 0;
 	size_t sd_len = 0;
+	size_t len = 0;
 	bool discoverable = false;
 	size_t *data_len;
 	int err;
@@ -1690,8 +2031,6 @@ static int cmd_adv_data(const struct shell *sh, size_t argc, char *argv[])
 			data = sd;
 			data_len = &sd_len;
 		} else {
-			size_t len;
-
 			len = hex2bin(arg, strlen(arg), &hex_data[hex_data_len],
 				      sizeof(hex_data) - hex_data_len);
 
@@ -1713,12 +2052,17 @@ static int cmd_adv_data(const struct shell *sh, size_t argc, char *argv[])
 	atomic_set_bit_to(adv_set_opt[selected_adv], SHELL_ADV_OPT_APPEARANCE,
 			  appearance);
 
-	ad_len = ad_init(&ad[*data_len], ARRAY_SIZE(ad) - *data_len,
-			 adv_set_opt[selected_adv]);
-	if (ad_len < 0) {
+	len = ad_init(&data[*data_len], AD_SIZE - *data_len, adv_set_opt[selected_adv]);
+	if (len < 0) {
 		shell_error(sh, "Failed to initialize stack advertising data");
 
 		return -ENOEXEC;
+	}
+
+	if (data == ad) {
+		ad_len += len;
+	} else {
+		sd_len += len;
 	}
 
 	err = bt_le_ext_adv_set_data(adv, ad_len > 0 ? ad : NULL, ad_len,
@@ -2067,21 +2411,13 @@ static int cmd_per_adv_data(const struct shell *sh, size_t argc,
 static int cmd_per_adv_sync_create(const struct shell *sh, size_t argc,
 				   char *argv[])
 {
+	struct bt_le_per_adv_sync *per_adv_sync = per_adv_syncs[selected_per_adv_sync];
 	int err;
 	struct bt_le_per_adv_sync_param create_params = { 0 };
 	uint32_t options = 0;
-	struct bt_le_per_adv_sync **free_per_adv_sync = NULL;
-	int i = 0;
 
-	for (i = 0; i < ARRAY_SIZE(per_adv_syncs); i++) {
-		if (per_adv_syncs[i] == NULL) {
-			free_per_adv_sync = &per_adv_syncs[i];
-			break;
-		}
-	}
-
-	if (i == ARRAY_SIZE(per_adv_syncs)) {
-		shell_error(sh, "Cannot create more per adv syncs");
+	if (per_adv_sync != NULL) {
+		shell_error(sh, "Selected per-adv-sync is not NULL");
 		return -ENOEXEC;
 	}
 
@@ -2097,30 +2433,30 @@ static int cmd_per_adv_sync_create(const struct shell *sh, size_t argc,
 
 	create_params.sid = strtol(argv[3], NULL, 16);
 
-	for (int i = 4; i < argc; i++) {
-		if (!strcmp(argv[i], "aoa")) {
+	for (int j = 4; j < argc; j++) {
+		if (!strcmp(argv[j], "aoa")) {
 			options |= BT_LE_PER_ADV_SYNC_OPT_DONT_SYNC_AOA;
-		} else if (!strcmp(argv[i], "aod_1us")) {
+		} else if (!strcmp(argv[j], "aod_1us")) {
 			options |= BT_LE_PER_ADV_SYNC_OPT_DONT_SYNC_AOD_1US;
-		} else if (!strcmp(argv[i], "aod_2us")) {
+		} else if (!strcmp(argv[j], "aod_2us")) {
 			options |= BT_LE_PER_ADV_SYNC_OPT_DONT_SYNC_AOD_2US;
-		} else if (!strcmp(argv[i], "only_cte")) {
+		} else if (!strcmp(argv[j], "only_cte")) {
 			options |=
 				BT_LE_PER_ADV_SYNC_OPT_SYNC_ONLY_CONST_TONE_EXT;
-		} else if (!strcmp(argv[i], "timeout")) {
-			if (++i == argc) {
+		} else if (!strcmp(argv[j], "timeout")) {
+			if (++j == argc) {
 				shell_help(sh);
 				return SHELL_CMD_HELP_PRINTED;
 			}
 
-			create_params.timeout = strtoul(argv[i], NULL, 16);
-		} else if (!strcmp(argv[i], "skip")) {
-			if (++i == argc) {
+			create_params.timeout = strtoul(argv[j], NULL, 16);
+		} else if (!strcmp(argv[j], "skip")) {
+			if (++j == argc) {
 				shell_help(sh);
 				return SHELL_CMD_HELP_PRINTED;
 			}
 
-			create_params.skip = strtoul(argv[i], NULL, 16);
+			create_params.skip = strtoul(argv[j], NULL, 16);
 		} else {
 			shell_help(sh);
 			return SHELL_CMD_HELP_PRINTED;
@@ -2131,7 +2467,7 @@ static int cmd_per_adv_sync_create(const struct shell *sh, size_t argc,
 
 	create_params.options = options;
 
-	err = bt_le_per_adv_sync_create(&create_params, free_per_adv_sync);
+	err = bt_le_per_adv_sync_create(&create_params, &per_adv_syncs[selected_per_adv_sync]);
 	if (err) {
 		shell_error(sh, "Per adv sync failed (%d)", err);
 	} else {
@@ -2144,24 +2480,11 @@ static int cmd_per_adv_sync_create(const struct shell *sh, size_t argc,
 static int cmd_per_adv_sync_delete(const struct shell *sh, size_t argc,
 				   char *argv[])
 {
-	struct bt_le_per_adv_sync *per_adv_sync = NULL;
-	int index;
+	struct bt_le_per_adv_sync *per_adv_sync = per_adv_syncs[selected_per_adv_sync];
 	int err;
 
-	if (argc > 1) {
-		index = strtol(argv[1], NULL, 10);
-	} else {
-		index = 0;
-	}
-
-	if (index >= ARRAY_SIZE(per_adv_syncs)) {
-		shell_error(sh, "Maximum index is %zu but %d was requested",
-			    ARRAY_SIZE(per_adv_syncs) - 1, index);
-	}
-
-	per_adv_sync = per_adv_syncs[index];
-
 	if (!per_adv_sync) {
+		shell_error(sh, "Selected per-adv-sync is NULL");
 		return -EINVAL;
 	}
 
@@ -2171,10 +2494,40 @@ static int cmd_per_adv_sync_delete(const struct shell *sh, size_t argc,
 		shell_error(sh, "Per adv sync delete failed (%d)", err);
 	} else {
 		shell_print(sh, "Per adv sync deleted");
-		per_adv_syncs[index] = NULL;
+		per_adv_syncs[selected_per_adv_sync] = NULL;
 	}
 
 	return 0;
+}
+
+static int cmd_per_adv_sync_select(const struct shell *sh, size_t argc, char *argv[])
+{
+	if (argc == 2) {
+		unsigned long id;
+		int err = 0;
+
+		id = shell_strtoul(argv[1], 0, &err);
+		if (err != 0) {
+			shell_error(sh, "Could not parse id: %d", err);
+			return -ENOEXEC;
+		}
+
+		if (id > ARRAY_SIZE(adv_sets)) {
+			shell_error(sh, "Invalid id: %lu", id);
+			return -EINVAL;
+		}
+
+		selected_per_adv_sync = id;
+		return 0;
+	}
+
+	for (size_t i = 0U; i < ARRAY_SIZE(adv_sets); i++) {
+		if (adv_sets[i]) {
+			shell_print(sh, "PER_ADV_SYNC[%zu] %p", i, adv_sets[i]);
+		}
+	}
+
+	return -ENOEXEC;
 }
 
 #if defined(CONFIG_BT_PER_ADV_SYNC_TRANSFER_RECEIVER)
@@ -2196,34 +2549,34 @@ static int cmd_past_subscribe(const struct shell *sh, size_t argc,
 	param.timeout = 1000; /* 10 seconds */
 	param.skip = 10;
 
-	for (int i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "aoa")) {
+	for (int j = 1; j < argc; j++) {
+		if (!strcmp(argv[j], "aoa")) {
 			param.options |=
 				BT_LE_PER_ADV_SYNC_TRANSFER_OPT_SYNC_NO_AOA;
-		} else if (!strcmp(argv[i], "aod_1us")) {
+		} else if (!strcmp(argv[j], "aod_1us")) {
 			param.options |=
 				BT_LE_PER_ADV_SYNC_TRANSFER_OPT_SYNC_NO_AOD_1US;
-		} else if (!strcmp(argv[i], "aod_2us")) {
+		} else if (!strcmp(argv[j], "aod_2us")) {
 			param.options |=
 				BT_LE_PER_ADV_SYNC_TRANSFER_OPT_SYNC_NO_AOD_2US;
-		} else if (!strcmp(argv[i], "only_cte")) {
+		} else if (!strcmp(argv[j], "only_cte")) {
 			param.options |=
 				BT_LE_PER_ADV_SYNC_TRANSFER_OPT_SYNC_ONLY_CTE;
-		} else if (!strcmp(argv[i], "timeout")) {
-			if (++i == argc) {
+		} else if (!strcmp(argv[j], "timeout")) {
+			if (++j == argc) {
 				shell_help(sh);
 				return SHELL_CMD_HELP_PRINTED;
 			}
 
-			param.timeout = strtoul(argv[i], NULL, 16);
-		} else if (!strcmp(argv[i], "skip")) {
-			if (++i == argc) {
+			param.timeout = strtoul(argv[j], NULL, 16);
+		} else if (!strcmp(argv[j], "skip")) {
+			if (++j == argc) {
 				shell_help(sh);
 				return SHELL_CMD_HELP_PRINTED;
 			}
 
-			param.skip = strtoul(argv[i], NULL, 16);
-		} else if (!strcmp(argv[i], "conn")) {
+			param.skip = strtoul(argv[j], NULL, 16);
+		} else if (!strcmp(argv[j], "conn")) {
 			if (!default_conn) {
 				shell_print(sh, "Not connected");
 				return -EINVAL;
@@ -2335,6 +2688,102 @@ static int cmd_per_adv_set_info_transfer(const struct shell *sh, size_t argc,
 	return err;
 }
 #endif /* CONFIG_BT_PER_ADV_SYNC_TRANSFER_SENDER && CONFIG_BT_PER_ADV */
+
+#if defined(CONFIG_BT_TRANSMIT_POWER_CONTROL)
+static int cmd_read_remote_tx_power(const struct shell *sh, size_t argc, char *argv[])
+{
+	if (argc < 3) {
+		int err = 0;
+		enum bt_conn_le_tx_power_phy phy = strtoul(argv[1], NULL, 16);
+
+		err = bt_conn_le_get_remote_tx_power_level(default_conn, phy);
+
+		if (!err) {
+			shell_print(sh, "Read Remote TX Power for PHY %s",
+				    tx_pwr_ctrl_phy2str(phy));
+		} else {
+			shell_print(sh, "error %d", err);
+		}
+	} else {
+		shell_help(sh);
+		return SHELL_CMD_HELP_PRINTED;
+	}
+	return 0;
+}
+
+static int cmd_read_local_tx_power(const struct shell *sh, size_t argc, char *argv[])
+{
+	int err = 0;
+
+	if (argc < 3) {
+		struct bt_conn_le_tx_power tx_power_level;
+
+		tx_power_level.phy = strtoul(argv[1], NULL, 16);
+
+		int8_t unachievable_current_level = -100;
+		/* Arbitrary, these are output parameters.*/
+		tx_power_level.current_level = unachievable_current_level;
+		tx_power_level.max_level = 6;
+
+		if (default_conn == NULL) {
+			shell_error(sh, "Conn handle error, at least one connection is required.");
+			return -ENOEXEC;
+		}
+		err = bt_conn_le_get_tx_power_level(default_conn, &tx_power_level);
+		if (err) {
+			shell_print(sh, "Commad returned error error %d", err);
+			return err;
+		}
+		if (tx_power_level.current_level == unachievable_current_level) {
+			shell_print(sh, "We received no current tx power level.");
+			return -EIO;
+		}
+		shell_print(sh, "Read local TX Power: current level: %d, PHY: %s, Max Level: %d",
+			    tx_power_level.current_level,
+			    tx_pwr_ctrl_phy2str((enum bt_conn_le_tx_power_phy)tx_power_level.phy),
+			    tx_power_level.max_level);
+	} else {
+		shell_help(sh);
+		return SHELL_CMD_HELP_PRINTED;
+	}
+
+	return err;
+}
+
+static int cmd_set_power_report_enable(const struct shell *sh, size_t argc, char *argv[])
+{
+	if (argc < 4) {
+		int err = 0;
+		bool local_enable = 0;
+		bool remote_enable = 0;
+
+		if (*argv[1] == '1') {
+			local_enable = 1;
+		}
+		if (*argv[2] == '1') {
+			remote_enable = 1;
+		}
+		if (default_conn == NULL) {
+			shell_error(sh, "Conn handle error, at least one connection is required.");
+			return -ENOEXEC;
+		}
+		err = bt_conn_le_set_tx_power_report_enable(default_conn, local_enable,
+							     remote_enable);
+		if (!err) {
+			shell_print(sh, "Tx Power Report: local: %s, remote: %s",
+				    enabled2str(local_enable), enabled2str(remote_enable));
+		} else {
+			shell_print(sh, "error %d", err);
+		}
+	} else {
+		shell_help(sh);
+		return SHELL_CMD_HELP_PRINTED;
+	}
+	return 0;
+}
+
+#endif
+
 
 #if defined(CONFIG_BT_CONN)
 #if defined(CONFIG_BT_CENTRAL)
@@ -2507,6 +2956,7 @@ static int cmd_disconnect(const struct shell *sh, size_t argc, char *argv[])
 
 static int cmd_select(const struct shell *sh, size_t argc, char *argv[])
 {
+	char addr_str[BT_ADDR_LE_STR_LEN];
 	struct bt_conn *conn;
 	bt_addr_le_t addr;
 	int err;
@@ -2528,6 +2978,9 @@ static int cmd_select(const struct shell *sh, size_t argc, char *argv[])
 	}
 
 	default_conn = conn;
+
+	bt_addr_le_to_str(&addr, addr_str, sizeof(addr_str));
+	shell_print(sh, "Selected conn is now: %s", addr_str);
 
 	return 0;
 }
@@ -3030,6 +3483,8 @@ static void connection_info(struct bt_conn *conn, void *user_data)
 		shell_print(ctx_shell, " #%u [ISO][%s] %s", info.id, role_str(info.role), addr);
 		break;
 #endif
+	default:
+		break;
 	}
 
 	(*conn_count)++;
@@ -3735,7 +4190,13 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 	SHELL_CMD(scan-filter-clear, &bt_scan_filter_clear_cmds,
 		      "Scan filter clear commands",
 		      cmd_default_handler),
+	SHELL_CMD_ARG(scan-verbose-output, NULL, "<value: on, off>", cmd_scan_verbose_output, 2, 0),
 #endif /* CONFIG_BT_OBSERVER */
+#if defined(CONFIG_BT_TRANSMIT_POWER_CONTROL)
+	SHELL_CMD_ARG(read-remote-tx-power, NULL, HELP_NONE, cmd_read_remote_tx_power, 2, 0),
+	SHELL_CMD_ARG(read-local-tx-power, NULL, HELP_NONE, cmd_read_local_tx_power, 2, 0),
+	SHELL_CMD_ARG(set-power-report-enable, NULL, HELP_NONE, cmd_set_power_report_enable, 3, 0),
+#endif
 #if defined(CONFIG_BT_BROADCASTER)
 	SHELL_CMD_ARG(advertise, NULL,
 		      "<type: off, on, scan, nconn> [mode: discov, non_discov] "
@@ -3783,6 +4244,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 		      cmd_per_adv_sync_create, 4, 6),
 	SHELL_CMD_ARG(per-adv-sync-delete, NULL, "[<index>]",
 		      cmd_per_adv_sync_delete, 1, 1),
+	SHELL_CMD_ARG(per-adv-sync-select, NULL, "[adv]", cmd_per_adv_sync_select, 1, 1),
 #endif /* defined(CONFIG_BT_PER_ADV_SYNC) */
 #if defined(CONFIG_BT_CONN)
 #if defined(CONFIG_BT_PER_ADV_SYNC_TRANSFER_RECEIVER)
@@ -3824,7 +4286,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(bt_cmds,
 	SHELL_CMD_ARG(phy-update, NULL, "<tx_phy> [rx_phy] [s2] [s8]",
 		      cmd_conn_phy_update, 2, 3),
 #endif
-#if defined(CONFIG_BT_CENTRAL)
+#if defined(CONFIG_BT_CENTRAL) || defined(CONFIG_BT_BROADCASTER)
 	SHELL_CMD_ARG(channel-map, NULL, "<channel-map: XXXXXXXXXX> (36-0)",
 		      cmd_chan_map, 2, 1),
 #endif /* CONFIG_BT_CENTRAL */

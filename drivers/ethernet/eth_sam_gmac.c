@@ -34,6 +34,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/sys/__assert.h>
+#include <zephyr/sys/barrier.h>
 #include <zephyr/sys/util.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -1220,6 +1221,10 @@ static int nonpriority_queue_init(Gmac *gmac, struct gmac_queue *queue)
 	gmac->GMAC_DCFGR =
 		/* Receive Buffer Size (defined in multiples of 64 bytes) */
 		GMAC_DCFGR_DRBS(CONFIG_NET_BUF_DATA_SIZE >> 6) |
+#if defined(GMAC_DCFGR_RXBMS)
+		/* Use full receive buffer size on parts where this is selectable */
+		GMAC_DCFGR_RXBMS(3) |
+#endif
 		/* Attempt to use INCR4 AHB bursts (Default) */
 		GMAC_DCFGR_FBLDO_INCR4 |
 		/* DMA Queue Flags */
@@ -1334,7 +1339,7 @@ static struct net_pkt *frame_get(struct gmac_queue *queue)
 		/* Guarantee that status word is written before the address
 		 * word to avoid race condition.
 		 */
-		__DMB();  /* data memory barrier */
+		barrier_dmem_fence_full();
 		/* Update buffer descriptor address word */
 		wrap = (tail == rx_desc_list->len-1U ? GMAC_RXW0_WRAP : 0);
 		rx_desc->w0 = ((uint32_t)frag->data & GMAC_RXW0_ADDR) | wrap;
@@ -1376,9 +1381,9 @@ static void eth_rx(struct gmac_queue *queue)
 		 * the used VLAN tag.
 		 */
 		{
-			struct net_eth_hdr *hdr = NET_ETH_HDR(rx_frame);
+			struct net_eth_hdr *p_hdr = NET_ETH_HDR(rx_frame);
 
-			if (ntohs(hdr->type) == NET_ETH_PTYPE_VLAN) {
+			if (ntohs(p_hdr->type) == NET_ETH_PTYPE_VLAN) {
 				struct net_eth_vlan_hdr *hdr_vlan =
 					(struct net_eth_vlan_hdr *)
 					NET_ETH_HDR(rx_frame);
@@ -1579,7 +1584,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	/* Guarantee that all the fragments have been written before removing
 	 * the used bit to avoid race condition.
 	 */
-	__DMB();  /* data memory barrier */
+	barrier_dmem_fence_full();
 
 	/* Remove the used bit of the first fragment to allow the controller
 	 * to process it and the following fragments.
@@ -1601,7 +1606,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	/* Guarantee that the first fragment got its bit removed before starting
 	 * sending packets to avoid packets getting stuck.
 	 */
-	__DMB();  /* data memory barrier */
+	barrier_dmem_fence_full();
 
 	/* Start transmission */
 	gmac->GMAC_NCR |= GMAC_NCR_TSTART;
@@ -1968,7 +1973,9 @@ static void eth0_iface_init(struct net_if *iface)
 	}
 
 	/* Do not start the interface until PHY link is up */
-	net_if_carrier_off(iface);
+	if (!(dev_data->link_up)) {
+		net_if_carrier_off(iface);
+	}
 
 	init_done = true;
 }
@@ -2217,11 +2224,7 @@ static const struct eth_sam_dev_cfg eth0_config = {
 	.clock_cfg = SAM_DT_INST_CLOCK_PMC_CFG(0),
 #endif
 	.config_func = eth0_irq_config,
-#if DT_NODE_EXISTS(DT_INST_CHILD(0, phy))
-	.phy_dev = DEVICE_DT_GET(DT_INST_CHILD(0, phy))
-#else
-#error "No PHY driver specified"
-#endif
+	.phy_dev = DEVICE_DT_GET(DT_INST_PHANDLE(0, phy_handle))
 };
 
 static struct eth_sam_dev_data eth0_data = {

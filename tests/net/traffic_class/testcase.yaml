@@ -1,8 +1,14 @@
 common:
-  platform_allow: native_posix native_posix_64
-  integration_platforms:
+  platform_allow:
+    - native_posix
     - native_posix_64
-  tags: net traffic_class
+    - native_sim
+    - native_sim_64
+  integration_platforms:
+    - native_sim_64
+  tags:
+    - net
+    - traffic_class
 tests:
   net.traffic_class.1:
     extra_configs:

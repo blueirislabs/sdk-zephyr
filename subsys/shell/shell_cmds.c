@@ -4,12 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/iterable_sections.h>
+
 #include "shell_utils.h"
 #include "shell_help.h"
 #include "shell_ops.h"
 #include "shell_vt100.h"
 
 #define SHELL_MSG_CMD_NOT_SUPPORTED	"Command not supported.\n"
+#define SHELL_HELP_COMMENT		"Ignore lines beginning with 'rem '"
+#define SHELL_HELP_RETVAL		"Print return value of most recent command"
 #define SHELL_HELP_CLEAR		"Clear screen."
 #define SHELL_HELP_BACKENDS		"List active shell backends.\n"
 #define SHELL_HELP_BACKSPACE_MODE	"Toggle backspace key mode.\n"	      \
@@ -27,6 +31,9 @@
 #define SHELL_HELP_VT100		"Toggle vt100 commands."
 #define SHELL_HELP_VT100_OFF		"Disable vt100 commands."
 #define SHELL_HELP_VT100_ON		"Enable vt100 commands."
+#define SHELL_HELP_PROMPT		"Toggle prompt."
+#define SHELL_HELP_PROMPT_OFF		"Disable prompt."
+#define SHELL_HELP_PROMPT_ON		"Enable prompt."
 #define SHELL_HELP_STATISTICS		"Shell statistics."
 #define SHELL_HELP_STATISTICS_SHOW	\
 	"Get shell statistics for the Logger module."
@@ -196,6 +203,15 @@ static int terminal_size_get(const struct shell *sh)
 	return ret_val;
 }
 
+static int cmd_comment(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(sh);
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	return 0;
+}
+
 static int cmd_clear(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argv);
@@ -215,7 +231,7 @@ static int cmd_backends(const struct shell *sh, size_t argc, char **argv)
 
 	shell_print(sh, "Active shell backends:");
 	STRUCT_SECTION_FOREACH(shell, obj) {
-		shell_print(sh, "  %2d. :%s", cnt++, obj->ctx->prompt);
+		shell_print(sh, "  %2d. :%s (%s)", cnt++, obj->ctx->prompt, sh->name);
 	}
 
 	return 0;
@@ -279,6 +295,26 @@ static int cmd_vt100_on(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	z_flag_use_vt100_set(sh, true);
+
+	return 0;
+}
+
+static int cmd_prompt_off(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_prompt_change(sh, "");
+
+	return 0;
+}
+
+static int cmd_prompt_on(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argv);
+	ARG_UNUSED(argv);
+
+	shell_prompt_change(sh, sh->default_prompt);
 
 	return 0;
 }
@@ -402,6 +438,15 @@ static int cmd_resize(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_get_retval(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	shell_print(sh, "%d", shell_get_return_value(sh));
+	return 0;
+}
+
 static bool no_args(const struct shell_static_entry *entry)
 {
 	return (entry->args.mandatory == 1) && (entry->args.optional == 0);
@@ -446,6 +491,12 @@ SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_vt100,
 	SHELL_SUBCMD_SET_END
 );
 
+SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_prompt,
+	SHELL_CMD_ARG(off, NULL, SHELL_HELP_PROMPT_OFF, cmd_prompt_off, 1, 0),
+	SHELL_CMD_ARG(on, NULL, SHELL_HELP_PROMPT_ON, cmd_prompt_on, 1, 0),
+	SHELL_SUBCMD_SET_END
+);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_echo,
 	SHELL_CMD_ARG(off, NULL, SHELL_HELP_ECHO_OFF, cmd_echo_off, 1, 0),
 	SHELL_CMD_ARG(on, NULL, SHELL_HELP_ECHO_ON, cmd_echo_on, 1, 0),
@@ -476,6 +527,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_shell,
 		       SHELL_HELP_COLORS, NULL),
 	SHELL_COND_CMD(CONFIG_SHELL_VT100_COMMANDS, vt100, &m_sub_vt100,
 		       SHELL_HELP_VT100, NULL),
+	SHELL_CMD(prompt, &m_sub_prompt, SHELL_HELP_PROMPT, NULL),
 	SHELL_CMD_ARG(echo, &m_sub_echo, SHELL_HELP_ECHO, cmd_echo, 1, 1),
 	SHELL_COND_CMD(CONFIG_SHELL_STATS, stats, &m_sub_shell_stats,
 			SHELL_HELP_STATISTICS, NULL),
@@ -488,6 +540,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_resize,
 	SHELL_SUBCMD_SET_END
 );
 
+SHELL_COND_CMD_REGISTER(CONFIG_SHELL_VT100_COMMANDS, rem, NULL,
+				SHELL_HELP_COMMENT, cmd_comment);
 SHELL_COND_CMD_ARG_REGISTER(CONFIG_SHELL_VT100_COMMANDS, clear, NULL,
 			    SHELL_HELP_CLEAR, cmd_clear, 1, 0);
 SHELL_CMD_REGISTER(shell, &m_sub_shell, SHELL_HELP_SHELL, NULL);
@@ -498,3 +552,5 @@ SHELL_COND_CMD_ARG_REGISTER(CONFIG_SHELL_CMDS_RESIZE, resize, &m_sub_resize,
 SHELL_COND_CMD_ARG_REGISTER(CONFIG_SHELL_CMDS_SELECT, select, NULL,
 			    SHELL_HELP_SELECT, cmd_select, 2,
 			    SHELL_OPT_ARG_CHECK_SKIP);
+SHELL_COND_CMD_ARG_REGISTER(CONFIG_SHELL_CMDS_RETURN_VALUE, retval, NULL,
+			    SHELL_HELP_RETVAL, cmd_get_retval, 1, 0);

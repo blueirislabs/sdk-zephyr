@@ -162,10 +162,10 @@ schema = yaml.safe_load(METADATA_SCHEMA)
 def validate_setting(setting, module_path, filename=None):
     if setting is not None:
         if filename is not None:
-            checkfile = os.path.join(module_path, setting, filename)
+            checkfile = Path(module_path) / setting / filename
         else:
-            checkfile = os.path.join(module_path, setting)
-        if not os.path.isfile(checkfile):
+            checkfile = Path(module_path) / setting
+        if not checkfile.resolve().is_file():
             return False
     return True
 
@@ -350,7 +350,10 @@ def process_kconfig(module, meta):
         return kconfig_snippet(meta, module_path, Path(kconfig_file),
                                blobs=taint_blobs)
     else:
-        return ""
+        name_sanitized = meta['name-sanitized']
+        return (f'config ZEPHYR_{name_sanitized.upper()}_MODULE\n'
+                f'   bool\n'
+                f'   default y\n')
 
 
 def process_sysbuildkconfig(module, meta):
@@ -522,11 +525,20 @@ def west_projects(manifest = None):
     # if user is providing a specific modules list.
     try:
         from west.manifest import Manifest
-        from west.util import WestNotFound
-        from west.version import __version__ as WestVersion
     except ImportError:
         # West is not installed, so don't return any projects.
         return None
+
+    # If west *is* installed, we need all of the following imports to
+    # work. West versions that are excessively old may fail here:
+    # west.configuration.MalformedConfig was
+    # west.manifest.MalformedConfig until west v0.14.0, for example.
+    # These should be hard errors.
+    from west.manifest import \
+        ManifestImportFailed, MalformedManifest, ManifestVersionError
+    from west.configuration import MalformedConfig
+    from west.util import WestNotFound
+    from west.version import __version__ as WestVersion
 
     from packaging import version
     try:
@@ -539,6 +551,9 @@ def west_projects(manifest = None):
             projects = manifest.get_projects([])
         manifest_path = manifest.path
         return {'manifest_path': manifest_path, 'projects': projects}
+    except (ManifestImportFailed, MalformedManifest,
+            ManifestVersionError, MalformedConfig) as e:
+        sys.exit(f'ERROR: {e}')
     except WestNotFound:
         # Only accept WestNotFound, meaning we are not in a west
         # workspace. Such setup is allowed, as west may be installed

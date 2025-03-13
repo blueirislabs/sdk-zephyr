@@ -29,15 +29,17 @@ uint8_t ring_buffer[RING_BUF_SIZE];
 
 struct ring_buf ringbuf;
 
+static bool rx_throttled;
+
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 USBD_CONFIGURATION_DEFINE(config_1,
 			  USB_SCD_SELF_POWERED,
 			  200);
 
 USBD_DESC_LANG_DEFINE(sample_lang);
-USBD_DESC_STRING_DEFINE(sample_mfr, "ZEPHYR", 1);
-USBD_DESC_STRING_DEFINE(sample_product, "Zephyr USBD CDC ACM", 2);
-USBD_DESC_STRING_DEFINE(sample_sn, "0123456789ABCDEF", 3);
+USBD_DESC_MANUFACTURER_DEFINE(sample_mfr, "ZEPHYR");
+USBD_DESC_PRODUCT_DEFINE(sample_product, "Zephyr USBD CDC ACM");
+USBD_DESC_SERIAL_NUMBER_DEFINE(sample_sn, "0123456789ABCDEF");
 
 USBD_DEVICE_DEFINE(sample_usbd,
 		   DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)),
@@ -106,11 +108,18 @@ static void interrupt_handler(const struct device *dev, void *user_data)
 	ARG_UNUSED(user_data);
 
 	while (uart_irq_update(dev) && uart_irq_is_pending(dev)) {
-		if (uart_irq_rx_ready(dev)) {
+		if (!rx_throttled && uart_irq_rx_ready(dev)) {
 			int recv_len, rb_len;
 			uint8_t buffer[64];
 			size_t len = MIN(ring_buf_space_get(&ringbuf),
 					 sizeof(buffer));
+
+			if (len == 0) {
+				/* Throttle because ring buffer is full */
+				uart_irq_rx_disable(dev);
+				rx_throttled = true;
+				continue;
+			}
 
 			recv_len = uart_fifo_read(dev, buffer, len);
 			if (recv_len < 0) {
@@ -138,6 +147,11 @@ static void interrupt_handler(const struct device *dev, void *user_data)
 				LOG_DBG("Ring buffer empty, disable TX IRQ");
 				uart_irq_tx_disable(dev);
 				continue;
+			}
+
+			if (rx_throttled) {
+				uart_irq_rx_enable(dev);
+				rx_throttled = false;
 			}
 
 			send_len = uart_fifo_fill(dev, buffer, rb_len);

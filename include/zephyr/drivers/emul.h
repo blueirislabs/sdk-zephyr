@@ -11,6 +11,7 @@
 /**
  * @brief Emulators used to test drivers and higher-level code that uses them
  * @defgroup io_emulators Emulator interface
+ * @ingroup testing
  * @{
  */
 
@@ -26,6 +27,7 @@ struct emul;
 #include <zephyr/drivers/espi_emul.h>
 #include <zephyr/drivers/i2c_emul.h>
 #include <zephyr/drivers/spi_emul.h>
+#include <zephyr/sys/iterable_sections.h>
 
 /**
  * The types of supported buses.
@@ -189,11 +191,9 @@ const struct emul *emul_get_binding(const char *name);
  * @}
  */
 
-#if defined(CONFIG_HAS_DTS) || defined(__DOXYGEN__)
 #define Z_MAYBE_EMUL_DECLARE_INTERNAL(node_id) extern const struct emul EMUL_DT_NAME_GET(node_id);
 
 DT_FOREACH_STATUS_OKAY_NODE(Z_MAYBE_EMUL_DECLARE_INTERNAL);
-#endif /* CONFIG_HAS_DTS || __DOXYGEN__ */
 
 #ifdef __cplusplus
 }

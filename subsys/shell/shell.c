@@ -952,7 +952,11 @@ static bool process_nl(const struct shell *sh, uint8_t data)
 #define SHELL_ASCII_MAX_CHAR (127u)
 static inline int ascii_filter(const char data)
 {
-	return (uint8_t) data > SHELL_ASCII_MAX_CHAR ? -EINVAL : 0;
+	if (IS_ENABLED(CONFIG_SHELL_ASCII_FILTER)) {
+		return (uint8_t) data > SHELL_ASCII_MAX_CHAR ? -EINVAL : 0;
+	} else {
+		return 0;
+	}
 }
 
 static void state_collect(const struct shell *sh)
@@ -1001,7 +1005,7 @@ static void state_collect(const struct shell *sh)
 					z_cursor_next_line_move(sh);
 				} else {
 					/* Command execution */
-					(void)execute(sh);
+					sh->ctx->ret_val = execute(sh);
 				}
 				/* Function responsible for printing prompt
 				 * on received NL.
@@ -1303,6 +1307,8 @@ static void kill_handler(const struct shell *sh)
 
 	sh->ctx->tid = NULL;
 	k_thread_abort(k_current_get());
+
+	CODE_UNREACHABLE;
 }
 
 void shell_thread(void *shell_handle, void *arg_log_backend,
@@ -1386,7 +1392,7 @@ int shell_init(const struct shell *sh, const void *transport_config,
 				  SHELL_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	sh->ctx->tid = tid;
-	k_thread_name_set(tid, sh->thread_name);
+	k_thread_name_set(tid, sh->name);
 
 	return 0;
 }
@@ -1482,6 +1488,17 @@ void shell_process(const struct shell *sh)
 	z_flag_processing_set(sh, false);
 }
 
+const struct shell *shell_backend_get_by_name(const char *backend_name)
+{
+	STRUCT_SECTION_FOREACH(shell, backend) {
+		if (strcmp(backend_name, backend->name) == 0) {
+			return backend;
+		}
+	}
+
+	return NULL;
+}
+
 /* This function mustn't be used from shell context to avoid deadlock.
  * However it can be used in shell command handlers.
  */
@@ -1503,11 +1520,11 @@ void shell_vfprintf(const struct shell *sh, enum shell_vt100_color color,
 	}
 
 	k_mutex_lock(&sh->ctx->wr_mtx, K_FOREVER);
-	if (!z_flag_cmd_ctx_get(sh) && !sh->ctx->bypass) {
+	if (!z_flag_cmd_ctx_get(sh) && !sh->ctx->bypass && z_flag_use_vt100_get(sh)) {
 		z_shell_cmd_line_erase(sh);
 	}
 	z_shell_vfprintf(sh, color, fmt, args);
-	if (!z_flag_cmd_ctx_get(sh) && !sh->ctx->bypass) {
+	if (!z_flag_cmd_ctx_get(sh) && !sh->ctx->bypass && z_flag_use_vt100_get(sh)) {
 		z_shell_print_prompt_and_cmd(sh);
 	}
 	z_transport_buffer_flush(sh);
@@ -1668,6 +1685,15 @@ int shell_use_vt100_set(const struct shell *sh, bool val)
 	}
 
 	return (int)z_flag_use_vt100_set(sh, val);
+}
+
+int shell_get_return_value(const struct shell *sh)
+{
+	if (sh == NULL) {
+		return -EINVAL;
+	}
+
+	return z_shell_get_return_value(sh);
 }
 
 int shell_echo_set(const struct shell *sh, bool val)

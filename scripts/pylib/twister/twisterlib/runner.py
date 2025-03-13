@@ -25,6 +25,7 @@ from colorama import Fore
 from domains import Domains
 from twisterlib.cmakecache import CMakeCache
 from twisterlib.environment import canonical_zephyr_base
+from twisterlib.error import BuildError, ConfigurationError
 
 import elftools
 from elftools.elf.elffile import ELFFile
@@ -39,7 +40,11 @@ if sys.platform == 'linux':
 
 from twisterlib.log_helper import log_command
 from twisterlib.testinstance import TestInstance
+from twisterlib.environment import TwisterEnv
+from twisterlib.testsuite import TestSuite
+from twisterlib.platform import Platform
 from twisterlib.testplan import change_skip_to_error_if_integration
+from twisterlib.harness import HarnessImporter, Pytest
 
 logger = logging.getLogger('twister')
 logger.setLevel(logging.DEBUG)
@@ -218,7 +223,7 @@ class CMake:
     config_re = re.compile('(CONFIG_[A-Za-z0-9_]+)[=]\"?([^\"]*)\"?$')
     dt_re = re.compile('([A-Za-z0-9_]+)[=]\"?([^\"]*)\"?$')
 
-    def __init__(self, testsuite, platform, source_dir, build_dir, jobserver):
+    def __init__(self, testsuite: TestSuite, platform: Platform, source_dir, build_dir, jobserver):
 
         self.cwd = None
         self.capture_output = True
@@ -357,6 +362,10 @@ class CMake:
         cmake_opts = ['-DBOARD={}'.format(self.platform.name)]
         cmake_args.extend(cmake_opts)
 
+        if self.instance.testsuite.required_snippets:
+            cmake_opts = ['-DSNIPPET={}'.format(';'.join(self.instance.testsuite.required_snippets))]
+            cmake_args.extend(cmake_opts)
+
         cmake = shutil.which('cmake')
         cmd = [cmake] + cmake_args
 
@@ -398,6 +407,7 @@ class CMake:
             results = {"returncode": p.returncode}
 
         if out:
+            os.makedirs(self.build_dir, exist_ok=True)
             with open(os.path.join(self.build_dir, self.log), "a", encoding=self.default_encoding) as log:
                 log_msg = out.decode(self.default_encoding)
                 log.write(log_msg)
@@ -407,7 +417,7 @@ class CMake:
 
 class FilterBuilder(CMake):
 
-    def __init__(self, testsuite, platform, source_dir, build_dir, jobserver):
+    def __init__(self, testsuite: TestSuite, platform: Platform, source_dir, build_dir, jobserver):
         super().__init__(testsuite, platform, source_dir, build_dir, jobserver)
 
         self.log = "config-twister.log"
@@ -510,7 +520,7 @@ class FilterBuilder(CMake):
 
 class ProjectBuilder(FilterBuilder):
 
-    def __init__(self, instance, env, jobserver, **kwargs):
+    def __init__(self, instance: TestInstance, env: TwisterEnv, jobserver, **kwargs):
         super().__init__(instance.testsuite, instance.platform, instance.testsuite.source_dir, instance.build_dir, jobserver)
 
         self.log = "build.log"
@@ -520,8 +530,7 @@ class ProjectBuilder(FilterBuilder):
         self.env = env
         self.duts = None
 
-    @staticmethod
-    def log_info(filename, inline_logs):
+    def log_info(self, filename, inline_logs, log_testcases=False):
         filename = os.path.abspath(os.path.realpath(filename))
         if inline_logs:
             logger.info("{:-^100}".format(filename))
@@ -535,6 +544,17 @@ class ProjectBuilder(FilterBuilder):
             logger.error(data)
 
             logger.info("{:-^100}".format(filename))
+
+            if log_testcases:
+                for tc in self.instance.testcases:
+                    if not tc.reason:
+                        continue
+                    logger.info(
+                        f"\n{str(tc.name).center(100, '_')}\n"
+                        f"{tc.reason}\n"
+                        f"{100*'_'}\n"
+                        f"{tc.output}"
+                    )
         else:
             logger.error("see: " + Fore.YELLOW + filename + Fore.RESET)
 
@@ -544,9 +564,12 @@ class ProjectBuilder(FilterBuilder):
         b_log = "{}/build.log".format(build_dir)
         v_log = "{}/valgrind.log".format(build_dir)
         d_log = "{}/device.log".format(build_dir)
+        pytest_log = "{}/twister_harness.log".format(build_dir)
 
         if os.path.exists(v_log) and "Valgrind" in self.instance.reason:
             self.log_info("{}".format(v_log), inline_logs)
+        elif os.path.exists(pytest_log) and os.path.getsize(pytest_log) > 0:
+            self.log_info("{}".format(pytest_log), inline_logs, log_testcases=True)
         elif os.path.exists(h_log) and os.path.getsize(h_log) > 0:
             self.log_info("{}".format(h_log), inline_logs)
         elif os.path.exists(d_log) and os.path.getsize(d_log) > 0:
@@ -616,8 +639,14 @@ class ProjectBuilder(FilterBuilder):
                     pipeline.put({"op": "report", "test": self.instance})
                 else:
                     logger.debug(f"Determine test cases for test instance: {self.instance.name}")
-                    self.determine_testcases(results)
-                    pipeline.put({"op": "gather_metrics", "test": self.instance})
+                    try:
+                        self.determine_testcases(results)
+                        pipeline.put({"op": "gather_metrics", "test": self.instance})
+                    except BuildError as e:
+                        logger.error(str(e))
+                        self.instance.status = "error"
+                        self.instance.reason = str(e)
+                        pipeline.put({"op": "report", "test": self.instance})
 
         elif op == "gather_metrics":
             self.gather_metrics(self.instance)
@@ -671,10 +700,12 @@ class ProjectBuilder(FilterBuilder):
         yaml_testsuite_name = self.instance.testsuite.id
         logger.debug(f"Determine test cases for test suite: {yaml_testsuite_name}")
 
-        elf = ELFFile(open(self.instance.get_elf_file(), "rb"))
+        elf_file = self.instance.get_elf_file()
+        elf = ELFFile(open(elf_file, "rb"))
 
         logger.debug(f"Test instance {self.instance.name} already has {len(self.instance.testcases)} cases.")
-        new_ztest_unit_test_regex = re.compile(r"z_ztest_unit_test__([^\s]*)__([^\s]*)")
+        new_ztest_unit_test_regex = re.compile(r"z_ztest_unit_test__([^\s]+?)__([^\s]*)")
+        detected_cases = []
         for section in elf.iter_sections():
             if isinstance(section, SymbolTableSection):
                 for sym in section.iter_symbols():
@@ -685,18 +716,24 @@ class ProjectBuilder(FilterBuilder):
                     # The 2nd capture group is new ztest unit test name.
                     matches = new_ztest_unit_test_regex.findall(sym.name)
                     if matches:
-                        # this is new ztest fx
-                        self.instance.testcases.clear()
-                        self.instance.testsuite.testcases.clear()
                         for m in matches:
                             # new_ztest_suite = m[0] # not used for now
                             test_func_name = m[1].replace("test_", "")
                             testcase_id = f"{yaml_testsuite_name}.{test_func_name}"
-                            # When the old regex-based test case collection is fully deprecated,
-                            # this will be the sole place where test cases get added to the test instance.
-                            # Then we can further include the new_ztest_suite info in the testcase_id.
-                            self.instance.add_testcase(name=testcase_id)
-                            self.instance.testsuite.add_testcase(name=testcase_id)
+                            detected_cases.append(testcase_id)
+
+        if detected_cases:
+            logger.debug(f"{', '.join(detected_cases)} in {elf_file}")
+            self.instance.testcases.clear()
+            self.instance.testsuite.testcases.clear()
+
+            # When the old regex-based test case collection is fully deprecated,
+            # this will be the sole place where test cases get added to the test instance.
+            # Then we can further include the new_ztest_suite info in the testcase_id.
+
+            for testcase_id in detected_cases:
+                self.instance.add_testcase(name=testcase_id)
+                self.instance.testsuite.add_testcase(name=testcase_id)
 
 
     def cleanup_artifacts(self, additional_keep=[]):
@@ -915,6 +952,8 @@ class ProjectBuilder(FilterBuilder):
                 if instance.handler.ready and instance.run:
                     more_info = instance.handler.type_str
                     htime = instance.execution_time
+                    if instance.dut:
+                        more_info += f": {instance.dut},"
                     if htime:
                         more_info += " {:.3f}s".format(htime)
                 else:
@@ -955,9 +994,15 @@ class ProjectBuilder(FilterBuilder):
         sys.stdout.flush()
 
     @staticmethod
-    def cmake_assemble_args(args, handler, extra_conf_files, extra_overlay_confs,
+    def cmake_assemble_args(extra_args, handler, extra_conf_files, extra_overlay_confs,
                             extra_dtc_overlay_files, cmake_extra_args,
                             build_dir):
+        # Retain quotes around config options
+        config_options = [arg for arg in extra_args if arg.startswith("CONFIG_")]
+        args = [arg for arg in extra_args if not arg.startswith("CONFIG_")]
+
+        args_expanded = ["-D{}".format(a.replace('"', '\"')) for a in config_options]
+
         if handler.ready:
             args.extend(handler.args)
 
@@ -980,7 +1025,7 @@ class ProjectBuilder(FilterBuilder):
             args.append("OVERLAY_CONFIG=\"%s\"" % (" ".join(overlays)))
 
         # Build the final argument list
-        args_expanded = ["-D{}".format(a.replace('"', '\"')) for a in cmake_extra_args]
+        args_expanded.extend(["-D{}".format(a.replace('"', '\"')) for a in cmake_extra_args])
         args_expanded.extend(["-D{}".format(a.replace('"', '')) for a in args])
 
         return args_expanded
@@ -1008,10 +1053,13 @@ class ProjectBuilder(FilterBuilder):
         instance = self.instance
 
         if instance.handler.ready:
+            logger.debug(f"Reset instance status from '{instance.status}' to None before run.")
+            instance.status = None
+
             if instance.handler.type_str == "device":
                 instance.handler.duts = self.duts
 
-            if(self.options.seed is not None and instance.platform.name.startswith("native_posix")):
+            if(self.options.seed is not None and instance.platform.name.startswith("native_")):
                 self.parse_generated()
                 if('CONFIG_FAKE_ENTROPY_NATIVE_POSIX' in self.defconfig and
                     self.defconfig['CONFIG_FAKE_ENTROPY_NATIVE_POSIX'] == 'y'):
@@ -1020,11 +1068,25 @@ class ProjectBuilder(FilterBuilder):
             if self.options.extra_test_args and instance.platform.arch == "posix":
                 instance.handler.extra_test_args = self.options.extra_test_args
 
-            instance.handler.handle()
+            harness = HarnessImporter.get_harness(instance.testsuite.harness.capitalize())
+            try:
+                harness.configure(instance)
+            except ConfigurationError as error:
+                instance.status = "error"
+                instance.reason = str(error)
+                logger.error(instance.reason)
+                return
+            #
+            if isinstance(harness, Pytest):
+                harness.pytest_run(instance.handler.get_test_timeout())
+            else:
+                instance.handler.handle(harness)
 
         sys.stdout.flush()
 
     def gather_metrics(self, instance: TestInstance):
+        if self.options.create_rom_ram_report:
+            self.run_build(['--build', self.build_dir, "--target", "footprint"])
         if self.options.enable_size_report and not self.options.cmake_only:
             self.calc_size(instance=instance, from_buildlog=self.options.footprint_from_buildlog)
         else:

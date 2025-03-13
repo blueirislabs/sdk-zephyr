@@ -35,7 +35,7 @@ NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0, NULL)
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_INST_GET(0, mdm_power_gpios);
 
 static void socket_close(struct modem_socket *sock);
-const struct socket_dns_offload offload_dns_ops;
+static const struct socket_dns_offload offload_dns_ops;
 
 static inline uint32_t hash32(char *str, int len)
 {
@@ -756,7 +756,7 @@ static void offload_freeaddrinfo(struct zsock_addrinfo *res)
 /*
  * DNS vtable.
  */
-const struct socket_dns_offload offload_dns_ops = {
+static const struct socket_dns_offload offload_dns_ops = {
 	.getaddrinfo = offload_getaddrinfo,
 	.freeaddrinfo = offload_freeaddrinfo,
 };
@@ -802,8 +802,12 @@ static int offload_socket(int family, int type, int proto)
 /*
  * Process all messages received from the modem.
  */
-static void modem_rx(void)
+static void modem_rx(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	while (true) {
 		/* Wait for incoming data */
 		modem_iface_uart_rx_wait(&mctx.iface, K_FOREVER);
@@ -1462,7 +1466,7 @@ static int parse_cgnsinf(char *gps_buf)
 	gnss_data.run_status = 1;
 	gnss_data.fix_status = 1;
 
-	strncpy(gnss_data.utc, utc, sizeof(gnss_data.utc));
+	strncpy(gnss_data.utc, utc, sizeof(gnss_data.utc) - 1);
 
 	ret = gnss_split_on_dot(lat, &number, &fraction);
 	if (ret != 0) {
@@ -2414,7 +2418,7 @@ static int modem_init(const struct device *dev)
 	}
 
 	k_thread_create(&modem_rx_thread, modem_rx_stack, K_KERNEL_STACK_SIZEOF(modem_rx_stack),
-			(k_thread_entry_t)modem_rx, NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
+			modem_rx, NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	/* Init RSSI query */
 	k_work_init_delayable(&mdata.rssi_query_work, modem_rssi_query_work);

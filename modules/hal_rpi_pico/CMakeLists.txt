@@ -42,7 +42,7 @@ if(CONFIG_HAS_RPI_PICO)
       BUILD_ALWAYS TRUE
       )
 
-      add_dependencies(${ZEPHYR_CURRENT_LIBRARY} second_stage_bootloader)
+      zephyr_library_add_dependencies(second_stage_bootloader)
       zephyr_library_sources(${rp2_bootloader_asm})
   endif()
 
@@ -105,6 +105,11 @@ if(CONFIG_HAS_RPI_PICO)
   zephyr_include_directories_ifdef(CONFIG_PICOSDK_USE_DMA
           ${rp2_common_dir}/hardware_dma/include)
 
+  zephyr_library_sources_ifdef(CONFIG_PICOSDK_USE_TIMER
+          ${rp2_common_dir}/hardware_timer/timer.c)
+  zephyr_include_directories_ifdef(CONFIG_PICOSDK_USE_TIMER
+          ${rp2_common_dir}/hardware_timer/include)
+
   zephyr_library_sources_ifdef(CONFIG_PICOSDK_USE_CLAIM
           ${rp2_common_dir}/hardware_claim/claim.c)
   zephyr_include_directories_ifdef(CONFIG_PICOSDK_USE_CLAIM
@@ -121,5 +126,15 @@ if(CONFIG_HAS_RPI_PICO)
     PROPERTIES
     COMPILE_FLAGS $<TARGET_PROPERTY:compiler,warning_no_pointer_arithmetic>
   )
+
+  zephyr_library_sources_ifdef(CONFIG_PICOSDK_USE_PIO
+          ${rp2_common_dir}/hardware_pio/pio.c)
+  zephyr_include_directories_ifdef(CONFIG_PICOSDK_USE_PIO
+          ${rp2_common_dir}/hardware_pio/include)
+
+  zephyr_library_sources_ifdef(CONFIG_PICOSDK_USE_CLAIM
+          ${rp2_common_dir}/hardware_claim/claim.c)
+  zephyr_include_directories_ifdef(CONFIG_PICOSDK_USE_CLAIM
+          ${rp2_common_dir}/hardware_claim/include)
 
 endif()

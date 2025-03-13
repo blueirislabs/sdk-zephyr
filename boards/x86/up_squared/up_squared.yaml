@@ -5,6 +5,9 @@ arch: x86
 toolchain:
   - zephyr
 ram: 256
+supported:
+  - acpi
+  - smp
 testing:
   ignore_tags:
     - net

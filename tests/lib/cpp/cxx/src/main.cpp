@@ -43,7 +43,6 @@
 /* drivers/espi_saf.h requires SoC specific header */
 #include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/fpga.h>
-#include <zephyr/drivers/gna.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/i2c_emul.h>
@@ -83,8 +82,6 @@
 #include <zephyr/rtio/rtio.h>
 #include <zephyr/rtio/rtio_spsc.h>
 #include <zephyr/rtio/rtio_mpsc.h>
-#include <zephyr/rtio/rtio_executor_simple.h>
-#include <zephyr/rtio/rtio_executor_concurrent.h>
 
 #include <zephyr/ztest.h>
 

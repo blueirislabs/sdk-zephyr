@@ -269,7 +269,7 @@ static int hci_spi_init(void)
 		return -EINVAL;
 	}
 
-	if (!device_is_ready(irq.port)) {
+	if (!gpio_is_ready_dt(&irq)) {
 		LOG_ERR("IRQ GPIO port %s is not ready", irq.port->name);
 		return -EINVAL;
 	}
@@ -322,6 +322,11 @@ int main(void)
 		if (err) {
 			LOG_ERR("Failed to send");
 		}
+		/* Ensure that the IRQ line is de-asserted for some minimum
+		 * duration between buffers, so that the HCI controller has
+		 * time to observe the edge.
+		 */
+		k_sleep(K_TICKS(1));
 	}
 	return 0;
 }

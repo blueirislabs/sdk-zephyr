@@ -107,6 +107,9 @@ struct ll_adv_aux_set *ull_adv_aux_get(uint8_t handle);
 uint32_t ull_adv_aux_time_get(const struct ll_adv_aux_set *aux, uint8_t pdu_len,
 			      uint8_t pdu_scan_len);
 
+/* helper function to schedule a mayfly to get aux offset */
+void ull_adv_aux_offset_get(struct ll_adv_set *adv);
+
 /* Below are BT Spec v5.2, Vol 6, Part B Section 2.3.4 Table 2.12 defined */
 #define ULL_ADV_PDU_HDR_FIELD_NONE           0
 #define ULL_ADV_PDU_HDR_FIELD_ADVA           BIT(0)
@@ -202,7 +205,7 @@ ull_adv_aux_hdr_len_fill(struct pdu_adv_com_ext_adv *com_hdr, uint8_t len)
 void ull_adv_sync_started_stopped(struct ll_adv_aux_set *aux);
 
 /* notify adv_sync_set that an iso instance has been created for it */
-void ull_adv_iso_created(struct ll_adv_sync_set *sync);
+void ull_adv_sync_iso_created(struct ll_adv_sync_set *sync);
 
 #endif /* CONFIG_BT_CTLR_ADV_EXT */
 
@@ -229,8 +232,8 @@ int ull_adv_sync_reset_finalize(void);
 /* Return ll_adv_sync_set context (unconditional) */
 struct ll_adv_sync_set *ull_adv_sync_get(uint8_t handle);
 
-/* Return the sync set handle given the sync set instance */
-uint16_t ull_adv_sync_handle_get(struct ll_adv_sync_set *sync);
+/* Return the aux set handle given the sync set instance */
+uint16_t ull_adv_sync_handle_get(const struct ll_adv_sync_set *sync);
 
 /* helper function to release periodic advertising instance */
 void ull_adv_sync_release(struct ll_adv_sync_set *sync);
@@ -286,6 +289,9 @@ void ull_adv_sync_extra_data_set_clear(void *extra_data_prev,
 				       uint16_t hdr_rem_fields,
 				       void *data);
 
+/* helper function to schedule a mayfly to get sync offset */
+void ull_adv_sync_offset_get(struct ll_adv_set *adv);
+
 int ull_adv_iso_init(void);
 int ull_adv_iso_reset(void);
 
@@ -297,6 +303,9 @@ uint8_t ull_adv_iso_chm_update(void);
 
 /* helper function to cleanup after channel map update complete */
 void ull_adv_iso_chm_complete(struct node_rx_hdr *rx);
+
+/* helper function to schedule a mayfly to get BIG offset */
+void ull_adv_iso_offset_get(struct ll_adv_sync_set *sync);
 
 /* helper function to handle adv ISO done BIG complete events */
 void ull_adv_iso_done_complete(struct node_rx_event_done *done);
@@ -312,6 +321,9 @@ struct lll_adv_iso_stream *ull_adv_iso_stream_get(uint16_t handle);
 
 /* helper function to release stream instances */
 void ull_adv_iso_stream_release(struct ll_adv_iso_set *adv_iso);
+
+/* helper function to return time reservation for Broadcast ISO event */
+uint32_t ull_adv_iso_max_time_get(const struct ll_adv_iso_set *adv_iso);
 
 #if defined(CONFIG_BT_CTLR_DF_ADV_CTE_TX)
 /* helper function to release unused DF configuration memory */

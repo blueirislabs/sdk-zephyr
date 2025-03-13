@@ -1,7 +1,8 @@
-.. _usb_dfu:
+.. zephyr:code-sample:: usb-dfu
+   :name: USB DFU (Device Firmware Upgrade)
+   :relevant-api: usbd_api _usb_device_core_api
 
-USB DFU Sample Application
-##########################
+   Implement device firmware upgrade using the USB DFU class driver.
 
 Overview
 ********
@@ -153,4 +154,4 @@ Note the ``Swap type: perm``.
 
 
 .. _MCUboot GitHub repo: https://github.com/zephyrproject-rtos/mcuboot
-.. _Using MCUboot with Zephyr: https://mcuboot.com/documentation/readme-zephyr/
+.. _Using MCUboot with Zephyr: https://docs.mcuboot.com/readme-zephyr

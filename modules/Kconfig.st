@@ -55,6 +55,9 @@ config USE_STDC_IIS3DHHC
 config USE_STDC_IIS3DWB
 	bool
 
+config USE_STDC_ILPS22QS
+	bool
+
 config USE_STDC_ISM303DAC
 	bool
 
@@ -112,6 +115,9 @@ config USE_STDC_LIS3DSH
 config USE_STDC_LIS3MDL
 	bool
 
+config USE_STDC_LPS22DF
+	bool
+
 config USE_STDC_LPS22HB
 	bool
 
@@ -154,6 +160,9 @@ config USE_STDC_LSM6DSM
 config USE_STDC_LSM6DSO
 	bool
 
+config USE_STDC_LSM6DSO16IS
+	bool
+
 config USE_STDC_LSM6DSO32
 	bool
 
@@ -164,6 +173,9 @@ config USE_STDC_LSM6DSR
 	bool
 
 config USE_STDC_LSM6DSRX
+	bool
+
+config USE_STDC_LSM6DSV16X
 	bool
 
 config USE_STDC_LSM9DS1

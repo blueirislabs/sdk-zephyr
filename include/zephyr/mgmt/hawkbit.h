@@ -7,7 +7,7 @@
 /**
  * @brief hawkBit Firmware Over-the-Air for Zephyr Project.
  * @defgroup hawkbit hawkBit Firmware Over-the-Air
- * @ingroup lib
+ * @ingroup third_party
  * @{
  */
 #ifndef ZEPHYR_INCLUDE_MGMT_HAWKBIT_H_
@@ -60,7 +60,7 @@ void hawkbit_autohandler(void);
  * @return HAWKBIT_OK if success.
  * @return HAWKBIT_DOWNLOAD_ERROR fail while downloading the update package.
  */
-enum hawkbit_response hawkbit_probe(struct sockaddr * addr, const char * token);
+enum hawkbit_response hawkbit_probe(void);
 
 /**
  * @}

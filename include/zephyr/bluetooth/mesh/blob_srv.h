@@ -4,13 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * @file
- * @defgroup bt_mesh_blob_srv Bluetooth mesh BLOB Transfer Server model API
- * @{
- * @brief API for the Bluetooth Mesh Binary Large Object (BLOB) Transfer Server model.
- */
-
 #ifndef ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_SRV_H_
 #define ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_SRV_H_
 
@@ -20,6 +13,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @defgroup bt_mesh_blob_srv Bluetooth Mesh BLOB Transfer Server model API
+ * @ingroup bt_mesh
+ * @{
+ */
 
 struct bt_mesh_blob_srv;
 
@@ -109,7 +108,7 @@ struct bt_mesh_blob_srv_cb {
 
 	/** @brief Transfer recovery callback.
 	 *
-	 *  Called when the Bluetooth mesh subsystem is started if the device is rebooted
+	 *  Called when the Bluetooth Mesh subsystem is started if the device is rebooted
 	 *  in the middle of a transfer.
 	 *
 	 *  Transfers will not be resumed after a reboot if this callback is not
@@ -137,7 +136,7 @@ struct bt_mesh_blob_srv {
 	const struct bt_mesh_blob_io *io;
 	struct k_work_delayable rx_timeout;
 	struct bt_mesh_blob_block block;
-	struct bt_mesh_model *mod;
+	const struct bt_mesh_model *mod;
 	enum bt_mesh_blob_xfer_phase phase;
 
 	struct bt_mesh_blob_srv_state {
@@ -212,10 +211,10 @@ extern const struct bt_mesh_model_op _bt_mesh_blob_srv_op[];
 extern const struct bt_mesh_model_cb _bt_mesh_blob_srv_cb;
 /** @endcond */
 
+/** @} */
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_SRV_H_ */
-
-/** @} */

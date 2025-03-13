@@ -26,6 +26,13 @@ Requirements
 Building and Running
 ********************
 
+First, ensure the optional CANopenNode module is enabled and available:
+
+   .. code-block:: console
+
+      west config manifest.project-filter +canopennode
+      west update canopennode
+
 Building and Running for TWR-KE18F
 ==================================
 The :ref:`twr_ke18f` board is equipped with an onboard CAN
@@ -433,13 +440,13 @@ generation.
 
 A popular choice is the EDS editor from the `libedssharp`_
 project. With that, the
-:zephyr_file:`samples/modules/canopennode/objdict/objdicts.xml`
+:zephyr_file:`samples/modules/canopennode/objdict/objdict.xml`
 project file can be opened and modified, and new implementation files
 (:zephyr_file:`samples/modules/canopennode/objdict/CO_OD.h` and
 :zephyr_file:`samples/modules/canopennode/objdict/CO_OD.c`) can be
 generated. The EDS editor can also export an updated Electronic Data
 Sheet (EDS) file
-(:zephyr_file:`samples/modules/canopennode/objdict/objdicts.eds`).
+(:zephyr_file:`samples/modules/canopennode/objdict/objdict.eds`).
 
 .. _CANopenNode:
    https://github.com/CANopenNode/CANopenNode

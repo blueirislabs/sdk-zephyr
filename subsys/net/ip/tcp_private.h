@@ -98,6 +98,23 @@
 	_pkt;								\
 })
 
+#define tcp_pkt_alloc_no_conn(_iface, _family, _len)			\
+({									\
+	struct net_pkt *_pkt;						\
+									\
+	if ((_len) > 0) {						\
+		_pkt = net_pkt_alloc_with_buffer(			\
+			(_iface), (_len), (_family),			\
+			IPPROTO_TCP,					\
+			TCP_PKT_ALLOC_TIMEOUT);				\
+	} else {							\
+		_pkt = net_pkt_alloc(TCP_PKT_ALLOC_TIMEOUT);		\
+	}								\
+									\
+	tp_pkt_alloc(_pkt, tp_basename(__FILE__), __LINE__);		\
+									\
+	_pkt;								\
+})
 
 #if defined(CONFIG_NET_TEST_PROTOCOL)
 #define conn_seq(_conn, _req) \
@@ -223,6 +240,15 @@ struct tcp_options {
 	bool wnd_found : 1;
 };
 
+#ifdef CONFIG_NET_TCP_CONGESTION_AVOIDANCE
+
+struct tcp_collision_avoidance_reno {
+	uint16_t cwnd;
+	uint16_t ssthresh;
+	uint16_t pending_fast_retransmit_bytes;
+};
+#endif
+
 struct tcp { /* TCP connection */
 	sys_snode_t next;
 	struct net_context *context;
@@ -274,6 +300,9 @@ struct tcp { /* TCP connection */
 #ifdef CONFIG_NET_TCP_RANDOMIZED_RTO
 	uint16_t rto;
 #endif
+#ifdef CONFIG_NET_TCP_CONGESTION_AVOIDANCE
+	struct tcp_collision_avoidance_reno ca;
+#endif
 	uint8_t send_data_retries;
 #ifdef CONFIG_NET_TCP_FAST_RETRANSMIT
 	uint8_t dup_ack_cnt;
@@ -299,6 +328,6 @@ struct tcp { /* TCP connection */
 })
 
 #define FL(_fl, _op, _mask, _args...)					\
-	_flags(_fl, _op, _mask, strlen("" #_args) ? _args : true)
+	_flags(_fl, _op, _mask, sizeof(#_args) > 1 ? _args : true)
 
 typedef void (*net_tcp_cb_t)(struct tcp *conn, void *user_data);

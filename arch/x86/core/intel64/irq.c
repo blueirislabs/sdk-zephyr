@@ -12,7 +12,9 @@
 #include <zephyr/drivers/interrupt_controller/loapic.h>
 #include <zephyr/irq.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/iterable_sections.h>
 #include <x86_mmu.h>
+#include <zephyr/init.h>
 
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
@@ -153,7 +155,7 @@ void arch_irq_offload(irq_offload_routine_t routine, const void *parameter)
 
 #if defined(CONFIG_SMP)
 
-void z_x86_ipi_setup(void)
+int arch_smp_init(void)
 {
 	/*
 	 * z_sched_ipi() doesn't have the same signature as a typical ISR, so
@@ -165,7 +167,10 @@ void z_x86_ipi_setup(void)
 
 	/* TLB shootdown handling */
 	x86_irq_funcs[CONFIG_TLB_IPI_VECTOR - IV_IRQS] = z_x86_tlb_ipi;
+	return 0;
 }
+
+SYS_INIT(arch_smp_init, PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
 /*
  * it is not clear exactly how/where/why to abstract this, as it
@@ -187,11 +192,7 @@ static ATOMIC_DEFINE(irq_reserved, CONFIG_MAX_IRQ_LINES);
 
 static void irq_init(void)
 {
-	extern uint8_t __irq_alloc_start[];
-	extern uint8_t __irq_alloc_end[];
-	const uint8_t *irq;
-
-	for (irq = __irq_alloc_start; irq < __irq_alloc_end; irq++) {
+	TYPE_SECTION_FOREACH(const uint8_t, irq_alloc, irq) {
 		__ASSERT_NO_MSG(*irq < CONFIG_MAX_IRQ_LINES);
 		atomic_set_bit(irq_reserved, *irq);
 	}

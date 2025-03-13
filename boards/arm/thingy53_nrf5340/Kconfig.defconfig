@@ -14,21 +14,6 @@ config BOOTLOADER_MCUBOOT
 config BOARD_ENABLE_CPUNET
 	default y if !MCUBOOT
 
-# By default, if we build for a Non-Secure version of the board,
-# enable building with TF-M as the Secure Execution Environment.
-config BUILD_WITH_TFM
-	default y if BOARD_THINGY53_NRF5340_CPUAPP_NS
-
-if BUILD_WITH_TFM
-
-# By default, if we build with TF-M, instruct build system to
-# flash the combined TF-M (Secure) & Zephyr (Non Secure) image
-config TFM_FLASH_MERGED_BINARY
-	bool
-	default y
-
-endif # BUILD_WITH_TFM
-
 # Code Partition:
 #
 # For the secure version of the board the firmware is linked at the beginning
@@ -80,11 +65,11 @@ endif # BOARD_THINGY53_NRF5340_CPUAPP_NS
 if !TRUSTED_EXECUTION_SECURE
 
 choice BT_HCI_BUS_TYPE
-	default BT_RPMSG if BT
+	default BT_HCI_IPC if BT
 endchoice
 
 config HEAP_MEM_POOL_SIZE
-	default 4096 if BT_RPMSG
+	default 4096 if BT_HCI_IPC
 
 config BT_HAS_HCI_VS
 	default BT
@@ -160,6 +145,7 @@ endif # BOARD_SERIAL_BACKEND_CDC_ACM
 # It is not necessary for nRF Connect SDK to add another instance if MCUBoot
 # bootloader is built as a child image.
 config MCUBOOT_USB_SUPPORT
+	bool
 	default n
 
 endif # BOARD_THINGY53_NRF5340_CPUAPP || BOARD_THINGY53_NRF5340_CPUAPP_NS

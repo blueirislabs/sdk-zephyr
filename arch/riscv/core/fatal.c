@@ -8,7 +8,7 @@
 #include <zephyr/kernel_structs.h>
 #include <kernel_internal.h>
 #include <inttypes.h>
-#include <zephyr/exc_handle.h>
+#include <zephyr/arch/common/exc_handle.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
@@ -167,7 +167,7 @@ void _Fault(z_arch_esf_t *esf)
 	__asm__ volatile("csrr %0, mtval" : "=r" (mtval));
 #endif
 
-	mcause &= SOC_MCAUSE_EXP_MASK;
+	mcause &= CONFIG_RISCV_MCAUSE_EXCEPTION_MASK;
 	LOG_ERR("");
 	LOG_ERR(" mcause: %ld, %s", mcause, cause_str(mcause));
 #ifndef CONFIG_SOC_OPENISA_RV32M1_RISCV32

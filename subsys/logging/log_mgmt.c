@@ -5,10 +5,12 @@
  */
 #include <zephyr/logging/log_internal.h>
 #include <zephyr/logging/log_ctrl.h>
-#include <zephyr/syscall_handler.h>
+#include <zephyr/internal/syscall_handler.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/logging/log_link.h>
+#include <zephyr/sys/iterable_sections.h>
+
 #include "log_cache.h"
 
 LOG_MODULE_REGISTER(log_mgmt);
@@ -196,7 +198,7 @@ static uint16_t link_source_count(uint8_t domain_id)
 uint32_t log_src_cnt_get(uint32_t domain_id)
 {
 	if (z_log_is_local_domain(domain_id)) {
-		return log_const_source_id(__log_const_end);
+		return z_log_sources_count();
 	}
 
 	return link_source_count(domain_id);
@@ -242,7 +244,7 @@ const char *log_source_name_get(uint32_t domain_id, uint32_t source_id)
 {
 	if (z_log_is_local_domain(domain_id)) {
 		if (source_id < log_src_cnt_get(domain_id)) {
-			return __log_const_start[source_id].name;
+			return TYPE_SECTION_START(log_const)[source_id].name;
 		} else {
 			return NULL;
 		}
@@ -308,7 +310,7 @@ uint8_t log_compiled_level_get(uint8_t domain_id, uint32_t source_id)
 {
 	if (z_log_is_local_domain(domain_id)) {
 		if (source_id < log_src_cnt_get(domain_id)) {
-			return __log_const_start[source_id].level;
+			return TYPE_SECTION_START(log_const)[source_id].level;
 		} else {
 			return LOG_LEVEL_NONE;
 		}
@@ -330,7 +332,7 @@ int z_log_link_set_runtime_level(uint8_t domain_id, uint16_t source_id, uint8_t 
 static uint32_t *get_dynamic_filter(uint8_t domain_id, uint32_t source_id)
 {
 	if (z_log_is_local_domain(domain_id)) {
-		return &__log_dynamic_start[source_id].filters;
+		return &TYPE_SECTION_START(log_dynamic)[source_id].filters;
 	}
 
 	return z_log_link_get_dynamic_filter(domain_id, source_id);
@@ -415,7 +417,7 @@ uint32_t z_impl_log_filter_set(struct log_backend const *const backend,
 			       uint32_t level)
 {
 	if (!IS_ENABLED(CONFIG_LOG_RUNTIME_FILTERING)) {
-		return level;
+		return log_compiled_level_get(domain_id, source_id);
 	}
 
 	__ASSERT_NO_MSG(source_id < log_src_cnt_get(domain_id));
@@ -447,13 +449,13 @@ uint32_t z_vrfy_log_filter_set(struct log_backend const *const backend,
 			    int16_t src_id,
 			    uint32_t level)
 {
-	Z_OOPS(Z_SYSCALL_VERIFY_MSG(backend == NULL,
+	K_OOPS(K_SYSCALL_VERIFY_MSG(backend == NULL,
 		"Setting per-backend filters from user mode is not supported"));
-	Z_OOPS(Z_SYSCALL_VERIFY_MSG(domain_id == Z_LOG_LOCAL_DOMAIN_ID,
+	K_OOPS(K_SYSCALL_VERIFY_MSG(domain_id == Z_LOG_LOCAL_DOMAIN_ID,
 		"Invalid log domain_id"));
-	Z_OOPS(Z_SYSCALL_VERIFY_MSG(src_id < (int16_t)log_src_cnt_get(domain_id),
+	K_OOPS(K_SYSCALL_VERIFY_MSG(src_id < (int16_t)log_src_cnt_get(domain_id),
 		"Invalid log source id"));
-	Z_OOPS(Z_SYSCALL_VERIFY_MSG(
+	K_OOPS(K_SYSCALL_VERIFY_MSG(
 		(level <= LOG_LEVEL_DBG),
 		"Invalid log level"));
 

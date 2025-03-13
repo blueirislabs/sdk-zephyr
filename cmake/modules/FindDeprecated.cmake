@@ -88,10 +88,12 @@ if("SPARSE" IN_LIST Deprecated_FIND_COMPONENTS)
   # This code was deprecated after Zephyr v3.2.0
   if(SPARSE)
     message(DEPRECATION
-        "Setting SPARSE=${SPARSE} is deprecated. "
+        "Setting SPARSE='${SPARSE}' is deprecated. "
         "Please set ZEPHYR_SCA_VARIANT to 'sparse'"
     )
-    set_ifndef(ZEPHYR_SCA_VARIANT sparse)
+    if("${SPARSE}" STREQUAL "y")
+      set_ifndef(ZEPHYR_SCA_VARIANT sparse)
+    endif()
   endif()
 endif()
 
@@ -112,9 +114,39 @@ if("PRJ_BOARD" IN_LIST Deprecated_FIND_COMPONENTS)
                       "replaced with board Kconfig fragments instead.")
 endif()
 
+if("PYTHON_PREFER" IN_LIST Deprecated_FIND_COMPONENTS)
+  # This code was deprecated after Zephyr v3.4.0
+  list(REMOVE_ITEM Deprecated_FIND_COMPONENTS PYTHON_PREFER)
+  if(DEFINED PYTHON_PREFER)
+    message(DEPRECATION "'PYTHON_PREFER' variable is deprecated. Please use "
+                        "Python3_EXECUTABLE instead.")
+    if(NOT DEFINED Python3_EXECUTABLE)
+      set(Python3_EXECUTABLE ${PYTHON_PREFER})
+    endif()
+  endif()
+endif()
+
 if(NOT "${Deprecated_FIND_COMPONENTS}" STREQUAL "")
   message(STATUS "The following deprecated component(s) could not be found: "
                  "${Deprecated_FIND_COMPONENTS}")
+endif()
+
+if("SEARCHED_LINKER_SCRIPT" IN_LIST Deprecated_FIND_COMPONENTS)
+  # This code was deprecated after Zephyr v3.5.0
+  list(REMOVE_ITEM Deprecated_FIND_COMPONENTS SEARCHED_LINKER_SCRIPT)
+
+  # Try a board specific linker file
+  set(LINKER_SCRIPT ${BOARD_DIR}/linker.ld)
+  if(NOT EXISTS ${LINKER_SCRIPT})
+    # If not available, try an SoC specific linker file
+    set(LINKER_SCRIPT ${SOC_DIR}/${ARCH}/${SOC_PATH}/linker.ld)
+  endif()
+  message(DEPRECATION
+      "Pre-defined `linker.ld` script is deprecated. Please set "
+      "BOARD_LINKER_SCRIPT or SOC_LINKER_SCRIPT to point to ${LINKER_SCRIPT} "
+      "or one of the Zephyr provided common linker scripts for the ${ARCH} "
+      "architecture."
+  )
 endif()
 
 set(Deprecated_FOUND True)

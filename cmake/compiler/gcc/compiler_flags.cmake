@@ -21,6 +21,9 @@ endif()
 set_compiler_property(PROPERTY optimization_speed -O2)
 set_compiler_property(PROPERTY optimization_size  -Os)
 
+set_compiler_property(PROPERTY optimization_lto -flto)
+set_compiler_property(PROPERTY prohibit_lto -fno-lto)
+
 #######################################################
 # This section covers flags related to warning levels #
 #######################################################
@@ -106,7 +109,7 @@ if (NOT CONFIG_NEWLIB_LIBC AND
     NOT (CONFIG_PICOLIBC AND NOT CONFIG_PICOLIBC_USE_MODULE) AND
     NOT COMPILER STREQUAL "xcc" AND
     NOT CONFIG_HAS_ESPRESSIF_HAL AND
-    NOT CONFIG_NATIVE_APPLICATION)
+    NOT CONFIG_NATIVE_BUILD)
   set_compiler_property(PROPERTY nostdinc -nostdinc)
   set_compiler_property(APPEND PROPERTY nostdinc_include ${NOSTDINC})
 endif()
@@ -160,7 +163,12 @@ set_compiler_property(PROPERTY coverage -fprofile-arcs -ftest-coverage -fno-inli
 set_compiler_property(PROPERTY security_canaries -fstack-protector-all)
 
 # Only a valid option with GCC 7.x and above, so let's do check and set.
-check_set_compiler_property(APPEND PROPERTY security_canaries -mstack-protector-guard=global)
+if(CONFIG_STACK_CANARIES_TLS)
+  check_set_compiler_property(APPEND PROPERTY security_canaries -mstack-protector-guard=tls)
+else()
+  check_set_compiler_property(APPEND PROPERTY security_canaries -mstack-protector-guard=global)
+endif()
+
 
 if(NOT CONFIG_NO_OPTIMIZATIONS)
   # _FORTIFY_SOURCE: Detect common-case buffer overflows for certain functions
@@ -181,6 +189,12 @@ set_compiler_property(PROPERTY debug -g)
 
 # Flags to save temporary object files
 set_compiler_property(PROPERTY save_temps -save-temps=obj)
+
+# Flag to specify linker script
+set_compiler_property(PROPERTY linker_script -T)
+
+# Flags to not track macro expansion
+set_compiler_property(PROPERTY no_track_macro_expansion -ftrack-macro-expansion=0)
 
 # GCC 11 by default emits DWARF version 5 which cannot be parsed by
 # pyelftools. Can be removed once pyelftools supports v5.
@@ -214,3 +228,8 @@ set_compiler_property(PROPERTY no_position_independent
 )
 
 set_compiler_property(PROPERTY no_global_merge "")
+
+set_compiler_property(PROPERTY warning_shadow_variables -Wshadow)
+
+set_compiler_property(PROPERTY no_builtin -fno-builtin)
+set_compiler_property(PROPERTY no_builtin_malloc -fno-builtin-malloc)

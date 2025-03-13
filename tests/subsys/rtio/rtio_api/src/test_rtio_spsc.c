@@ -5,6 +5,7 @@
  */
 
 #include <zephyr/ztest.h>
+#include <zephyr/timing/timing.h>
 #include <zephyr/rtio/rtio_spsc.h>
 #include "rtio_api.h"
 
@@ -140,6 +141,9 @@ RTIO_SPSC_DEFINE(spsc, uint32_t, 4);
 
 static void t1_consume(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	struct rtio_spsc_spsc *ezspsc = p1;
 	uint32_t retries = 0;
 	uint32_t *val = NULL;
@@ -161,6 +165,9 @@ static void t1_consume(void *p1, void *p2, void *p3)
 
 static void t2_produce(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	struct rtio_spsc_spsc *ezspsc = p1;
 	uint32_t retries = 0;
 	uint32_t *val = NULL;
@@ -200,13 +207,13 @@ ZTEST(rtio_spsc, test_spsc_threaded)
 
 	tinfo[0].tid =
 		k_thread_create(&tthread[0], tstack[0], STACK_SIZE,
-				(k_thread_entry_t)t1_consume,
+				t1_consume,
 				&spsc, NULL, NULL,
 				K_PRIO_PREEMPT(5),
 				K_INHERIT_PERMS, K_NO_WAIT);
 	tinfo[1].tid =
 		k_thread_create(&tthread[1], tstack[1], STACK_SIZE,
-				(k_thread_entry_t)t2_produce,
+				t2_produce,
 				&spsc, NULL, NULL,
 				K_PRIO_PREEMPT(5),
 				K_INHERIT_PERMS, K_NO_WAIT);
@@ -215,4 +222,42 @@ ZTEST(rtio_spsc, test_spsc_threaded)
 	k_thread_join(tinfo[0].tid, K_FOREVER);
 }
 
-ZTEST_SUITE(rtio_spsc, NULL, NULL, NULL, NULL, NULL);
+#define THROUGHPUT_ITERS 100000
+
+ZTEST(rtio_spsc, test_spsc_throughput)
+{
+	timing_t start_time, end_time;
+
+	timing_init();
+	timing_start();
+
+	start_time = timing_counter_get();
+
+	uint32_t *x, *y;
+
+	for (int i = 0; i < THROUGHPUT_ITERS; i++) {
+		x = rtio_spsc_acquire(&spsc);
+		*x = i;
+		rtio_spsc_produce(&spsc);
+
+		y = rtio_spsc_consume(&spsc);
+		rtio_spsc_release(&spsc);
+	}
+
+	end_time = timing_counter_get();
+
+	uint64_t cycles = timing_cycles_get(&start_time, &end_time);
+	uint64_t ns = timing_cycles_to_ns(cycles);
+
+	TC_PRINT("%llu ns for %d iterations, %llu ns per op\n", ns,
+		 THROUGHPUT_ITERS, ns/THROUGHPUT_ITERS);
+}
+
+static void rtio_spsc_before(void *data)
+{
+	ARG_UNUSED(data);
+
+	rtio_spsc_reset(&spsc);
+}
+
+ZTEST_SUITE(rtio_spsc, NULL, NULL, rtio_spsc_before, NULL, NULL);

@@ -120,12 +120,12 @@ int net_ipv6_finalize(struct net_pkt *pkt, uint8_t next_header_proto)
 
 	if (IS_ENABLED(CONFIG_NET_UDP) &&
 	    next_header_proto == IPPROTO_UDP) {
-		return net_udp_finalize(pkt);
+		return net_udp_finalize(pkt, false);
 	} else if (IS_ENABLED(CONFIG_NET_TCP) &&
 		   next_header_proto == IPPROTO_TCP) {
-		return net_tcp_finalize(pkt);
+		return net_tcp_finalize(pkt, false);
 	} else if (next_header_proto == IPPROTO_ICMPV6) {
-		return net_icmpv6_finalize(pkt);
+		return net_icmpv6_finalize(pkt, false);
 	}
 
 	return 0;
@@ -519,6 +519,11 @@ enum net_verdict net_ipv6_input(struct net_pkt *pkt, bool is_loopback)
 	net_pkt_set_ip_hdr_len(pkt, sizeof(struct net_ipv6_hdr));
 	net_pkt_set_ipv6_hop_limit(pkt, NET_IPV6_HDR(pkt)->hop_limit);
 	net_pkt_set_family(pkt, PF_INET6);
+
+	if (!net_pkt_filter_ip_recv_ok(pkt)) {
+		/* drop the packet */
+		return NET_DROP;
+	}
 
 	if (IS_ENABLED(CONFIG_NET_ROUTE_MCAST) &&
 		net_ipv6_is_addr_mcast((struct in6_addr *)hdr->dst)) {

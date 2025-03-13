@@ -10,6 +10,10 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/logging/log.h>
+#include <stm32_ll_adc.h>
+#if defined(CONFIG_SOC_SERIES_STM32H5X)
+#include <stm32_ll_icache.h>
+#endif /* CONFIG_SOC_SERIES_STM32H5X */
 
 LOG_MODULE_REGISTER(stm32_temp, CONFIG_SENSOR_LOG_LEVEL);
 #define CAL_RES 12
@@ -32,6 +36,7 @@ LOG_MODULE_REGISTER(stm32_temp, CONFIG_SENSOR_LOG_LEVEL);
 struct stm32_temp_data {
 	const struct device *adc;
 	const struct adc_channel_cfg adc_cfg;
+	ADC_TypeDef *adc_base;
 	struct adc_sequence adc_seq;
 	struct k_mutex mutex;
 	int16_t sample_buffer;
@@ -75,6 +80,10 @@ static int stm32_temp_sample_fetch(const struct device *dev, enum sensor_channel
 		goto unlock;
 	}
 
+	LL_ADC_SetCommonPathInternalCh(__LL_ADC_COMMON_INSTANCE(data->adc_base),
+				       LL_ADC_PATH_INTERNAL_TEMPSENSOR);
+	k_usleep(LL_ADC_DELAY_TEMPSENSOR_STAB_US);
+
 	rc = adc_read(data->adc, sp);
 	if (rc == 0) {
 		data->raw = data->sample_buffer;
@@ -98,6 +107,11 @@ static int stm32_temp_channel_get(const struct device *dev, enum sensor_channel 
 	}
 
 #if HAS_CALIBRATION
+
+#if defined(CONFIG_SOC_SERIES_STM32H5X)
+	LL_ICACHE_Disable();
+#endif /* CONFIG_SOC_SERIES_STM32H5X */
+
 	temp = ((float)data->raw * adc_ref_internal(data->adc)) / cfg->cal_vrefanalog;
 	temp -= (*cfg->cal1_addr >> cfg->ts_cal_shift);
 #if HAS_SINGLE_CALIBRATION
@@ -110,6 +124,11 @@ static int stm32_temp_channel_get(const struct device *dev, enum sensor_channel 
 	temp /= ((*cfg->cal2_addr - *cfg->cal1_addr) >> cfg->ts_cal_shift);
 #endif
 	temp += cfg->cal1_temp;
+
+#if defined(CONFIG_SOC_SERIES_STM32H5X)
+	LL_ICACHE_Enable();
+#endif /* CONFIG_SOC_SERIES_STM32H5X */
+
 #else
 	/* Sensor value in millivolts */
 	int32_t mv = data->raw * adc_ref_internal(data->adc) / 0x0FFF;
@@ -155,6 +174,7 @@ static int stm32_temp_init(const struct device *dev)
 
 static struct stm32_temp_data stm32_temp_dev_data = {
 	.adc = DEVICE_DT_GET(DT_INST_IO_CHANNELS_CTLR(0)),
+	.adc_base = (ADC_TypeDef *)DT_REG_ADDR(DT_INST_IO_CHANNELS_CTLR(0)),
 	.adc_cfg = {
 		.gain = ADC_GAIN_1,
 		.reference = ADC_REF_INTERNAL,

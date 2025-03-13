@@ -1204,10 +1204,10 @@ static void rx_block_status(struct bt_mesh_blob_cli *cli,
 	blob_cli_broadcast_rsp(cli, target);
 }
 
-static int handle_xfer_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
+static int handle_xfer_status(const struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
 			      struct net_buf_simple *buf)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 	enum bt_mesh_blob_xfer_phase expected_phase;
 	struct bt_mesh_blob_target *target;
 	struct bt_mesh_blob_xfer_info info = { 0 };
@@ -1276,10 +1276,10 @@ static int handle_xfer_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx 
 	return 0;
 }
 
-static int handle_block_report(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
+static int handle_block_report(const struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
 			       struct net_buf_simple *buf)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 	struct block_status status = {
 		.status = BT_MESH_BLOB_SUCCESS,
 		.block.number = cli->block.number,
@@ -1330,10 +1330,10 @@ static int handle_block_report(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx
 	return 0;
 }
 
-static int handle_block_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
+static int handle_block_status(const struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
 			       struct net_buf_simple *buf)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 	struct bt_mesh_blob_target *target;
 	struct block_status status = { 0 };
 	uint8_t status_and_format;
@@ -1375,8 +1375,8 @@ static int handle_block_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx
 		LOG_DBG("Missing: %s", bt_hex(status.block.missing, len));
 		break;
 	case BT_MESH_BLOB_CHUNKS_MISSING_ENCODED:
-		/** An empty Missing Chunks field entails that there are no
-		 *  missing chunks for this block (Spec 5.3.8)
+		/** MshMBTv1.0: 5.3.8: An empty Missing Chunks field entails that there are no
+		 * missing chunks for this block.
 		 */
 		if (!buf->len) {
 			status.missing = BT_MESH_BLOB_CHUNKS_MISSING_NONE;
@@ -1401,10 +1401,10 @@ static int handle_block_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx
 	return 0;
 }
 
-static int handle_info_status(struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
+static int handle_info_status(const struct bt_mesh_model *mod, struct bt_mesh_msg_ctx *ctx,
 			      struct net_buf_simple *buf)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 	struct bt_mesh_blob_cli_caps caps;
 	enum bt_mesh_blob_status status;
 	struct bt_mesh_blob_target *target;
@@ -1458,9 +1458,9 @@ const struct bt_mesh_model_op _bt_mesh_blob_cli_op[] = {
 	BT_MESH_MODEL_OP_END,
 };
 
-static int blob_cli_init(struct bt_mesh_model *mod)
+static int blob_cli_init(const struct bt_mesh_model *mod)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 
 	cli->mod = mod;
 
@@ -1471,9 +1471,9 @@ static int blob_cli_init(struct bt_mesh_model *mod)
 	return 0;
 }
 
-static void blob_cli_reset(struct bt_mesh_model *mod)
+static void blob_cli_reset(const struct bt_mesh_model *mod)
 {
-	struct bt_mesh_blob_cli *cli = mod->user_data;
+	struct bt_mesh_blob_cli *cli = mod->rt->user_data;
 
 	cli_state_reset(cli);
 }
@@ -1531,8 +1531,12 @@ int bt_mesh_blob_cli_send(struct bt_mesh_blob_cli *cli,
 	cli->xfer = xfer;
 	cli->inputs = inputs;
 	cli->io = io;
-	cli->block_count = DIV_ROUND_UP(cli->xfer->size,
-					    (1U << cli->xfer->block_size_log));
+
+	if (cli->xfer->block_size_log == 0x20) {
+		cli->block_count = 1;
+	} else {
+		cli->block_count = DIV_ROUND_UP(cli->xfer->size, (1U << cli->xfer->block_size_log));
+	}
 
 	block_set(cli, 0);
 
@@ -1546,9 +1550,9 @@ int bt_mesh_blob_cli_send(struct bt_mesh_blob_cli *cli,
 		return -ENODEV;
 	}
 
-	LOG_DBG("\n\tblock size: %u\n\tchunk size: %u\n"
+	LOG_DBG("\n\tblock size log: %u\n\tchunk size: %u\n"
 		"\tblob size: %u\n\tmode: %x",
-		(1 << cli->xfer->block_size_log), cli->xfer->chunk_size,
+		cli->xfer->block_size_log, cli->xfer->chunk_size,
 		cli->xfer->size, cli->xfer->mode);
 
 	return xfer_start(cli);

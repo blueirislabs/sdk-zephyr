@@ -13,8 +13,10 @@
 #include <zephyr/init.h>
 #include <zephyr/app_memory/app_memdomain.h>
 #include <zephyr/drivers/entropy.h>
-#include <zephyr/random/rand32.h>
+#include <zephyr/random/random.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/platform_time.h>
+
 
 #include <mbedtls/debug.h>
 
@@ -45,7 +47,7 @@ static void init_heap(void)
 #define init_heap(...)
 #endif /* CONFIG_MBEDTLS_ENABLE_HEAP && MBEDTLS_MEMORY_BUFFER_ALLOC_C */
 
-#if defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY)
+#if defined(CONFIG_MBEDTLS_ZEPHYR_ENTROPY) && !defined(CONFIG_NRF_CC3XX_PLATFORM)
 static const struct device *const entropy_dev =
 			DEVICE_DT_GET_OR_NULL(DT_CHOSEN(zephyr_entropy));
 
@@ -95,4 +97,21 @@ static int _mbedtls_init(void)
 	return 0;
 }
 
+#if defined(CONFIG_MBEDTLS_INIT)
 SYS_INIT(_mbedtls_init, POST_KERNEL, 0);
+#endif
+
+/* if CONFIG_MBEDTLS_INIT is not defined then this function
+ * should be called by the platform before any mbedtls functionality
+ * is used
+ */
+int mbedtls_init(void)
+{
+	return _mbedtls_init();
+}
+
+/* TLS 1.3 ticket lifetime needs a timing interface */
+mbedtls_ms_time_t mbedtls_ms_time(void)
+{
+	return (mbedtls_ms_time_t)k_uptime_get();
+}

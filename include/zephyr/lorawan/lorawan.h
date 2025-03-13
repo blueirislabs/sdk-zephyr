@@ -11,7 +11,7 @@
  * @file
  * @brief Public LoRaWAN APIs
  * @defgroup lorawan_api LoRaWAN APIs
- * @ingroup subsystem
+ * @ingroup connectivity
  * @{
  */
 
@@ -107,9 +107,12 @@ struct lorawan_join_otaa {
 	 * increasing for each OTAA join with the same EUI. The DevNonce
 	 * should be stored in non-volatile memory by the application.
 	 */
-	uint32_t dev_nonce;
+	uint16_t dev_nonce;
 };
 
+/**
+ * @brief LoRaWAN join parameters for activation by personalization (ABP)
+ */
 struct lorawan_join_abp {
 	/** Device address on the network */
 	uint32_t dev_addr;
@@ -121,6 +124,9 @@ struct lorawan_join_abp {
 	uint8_t *app_eui;
 };
 
+/**
+ * @brief LoRaWAN join parameters
+ */
 struct lorawan_join_config {
 	union {
 		struct lorawan_join_otaa otaa;
@@ -130,16 +136,22 @@ struct lorawan_join_config {
 	/** Device EUI. Optional if a secure element is present. */
 	uint8_t *dev_eui;
 
+	/** Activation mode */
 	enum lorawan_act_type mode;
 };
 
 #define LW_RECV_PORT_ANY UINT16_MAX
 
+/**
+ * @brief LoRaWAN downlink callback parameters
+ */
 struct lorawan_downlink_cb {
-	/* Port to handle messages for:
-	 *               Port 0: TX packet acknowledgements
-	 *          Ports 1-255: Standard downlink port
-	 *     LW_RECV_PORT_ANY: All downlinks
+	/**
+	 * @brief Port to handle messages for.
+	 *
+	 * - Port 0: TX packet acknowledgements
+	 * - Ports 1-255: Standard downlink port
+	 * - LW_RECV_PORT_ANY: All downlinks
 	 */
 	uint16_t port;
 	/**
@@ -163,22 +175,32 @@ struct lorawan_downlink_cb {
 };
 
 /**
- * @brief Add battery level callback function.
+ * @brief Defines the battery level callback handler function signature.
+ *
+ * @retval 0      if the node is connected to an external power source
+ * @retval 1..254 battery level, where 1 is the minimum and 254 is the maximum value
+ * @retval 255    if the node was not able to measure the battery level
+ */
+typedef uint8_t (*lorawan_battery_level_cb_t)(void);
+
+/**
+ * @brief Defines the datarate changed callback handler function signature.
+ *
+ * @param dr Updated datarate.
+ */
+typedef void (*lorawan_dr_changed_cb_t)(enum lorawan_datarate dr);
+
+/**
+ * @brief Register a battery level callback function.
  *
  * Provide the LoRaWAN stack with a function to be called whenever a battery
- * level needs to be read. As per LoRaWAN specification the callback needs to
- * return "0:      node is connected to an external power source,
- *         1..254: battery level, where 1 is the minimum and 254 is the maximum
- *                 value,
- *         255: the node was not able to measure the battery level"
+ * level needs to be read.
  *
  * Should no callback be provided the lorawan backend will report 255.
  *
- * @param battery_lvl_cb Pointer to the battery level function
- *
- * @return 0 if successful, negative errno code if failure
+ * @param cb Pointer to the battery level function
  */
-int lorawan_set_battery_level_callback(uint8_t (*battery_lvl_cb)(void));
+void lorawan_register_battery_level_callback(lorawan_battery_level_cb_t cb);
 
 /**
  * @brief Register a callback to be run on downlink packets
@@ -193,12 +215,9 @@ void lorawan_register_downlink_callback(struct lorawan_downlink_cb *cb);
  * The callback is called once upon successfully joining a network and again
  * each time the datarate changes due to ADR.
  *
- * The callback function takes one parameter:
- *	- dr - updated datarate
- *
- * @param dr_cb Pointer to datarate update callback
+ * @param cb Pointer to datarate update callback
  */
-void lorawan_register_dr_changed_callback(void (*dr_cb)(enum lorawan_datarate));
+void lorawan_register_dr_changed_callback(lorawan_dr_changed_cb_t cb);
 
 /**
  * @brief Join the LoRaWAN network

@@ -66,8 +66,9 @@ struct llcp_struct {
 
 	/* Prepare parameters */
 	struct {
-		uint32_t ticks_at_expire;
-		uint16_t lazy;
+		uint32_t ticks_at_expire; /* Vendor specific tick units */
+		uint32_t remainder;       /* Vendor specific remainder fraction of a tick unit */
+		uint16_t lazy;            /* Previous skipped radio event count */
 	} prep;
 
 	/* Version Exchange Procedure State */
@@ -147,6 +148,10 @@ struct llcp_struct {
 
 	uint8_t tx_buffer_alloc;
 	uint8_t tx_q_pause_data_mask;
+
+	struct node_rx_pdu *rx_node_release;
+	struct node_tx *tx_node_release;
+
 }; /* struct llcp_struct */
 
 struct ll_conn {
@@ -197,7 +202,6 @@ struct ll_conn {
 #if defined(CONFIG_BT_CTLR_CONN_META)
 			uint8_t  is_must_expire:1;
 #endif /* CONFIG_BT_CTLR_CONN_META */
-			uint8_t terminate_ack:1;
 		} central;
 #endif /* CONFIG_BT_CENTRAL */
 	};

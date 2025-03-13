@@ -8,11 +8,17 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pcie, LOG_LEVEL_ERR);
 
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/sys/check.h>
 #include <stdbool.h>
 #include <zephyr/drivers/pcie/pcie.h>
+#include <zephyr/sys/iterable_sections.h>
+
+#ifdef CONFIG_ACPI
+#include <zephyr/acpi/acpi.h>
+#endif
 
 #if CONFIG_PCIE_MSI
 #include <zephyr/drivers/pcie/msi.h>
@@ -284,7 +290,13 @@ unsigned int pcie_alloc_irq(pcie_bdf_t bdf)
 	if (irq == PCIE_CONF_INTR_IRQ_NONE ||
 	    irq >= CONFIG_MAX_IRQ_LINES ||
 	    arch_irq_is_used(irq)) {
+
+#ifdef CONFIG_PCIE_PRT
+		irq = acpi_legacy_irq_get(bdf);
+#else
 		irq = arch_irq_allocate();
+#endif
+
 		if (irq == UINT_MAX) {
 			return PCIE_CONF_INTR_IRQ_NONE;
 		}
@@ -494,8 +506,15 @@ static bool pcie_dev_cb(pcie_bdf_t bdf, pcie_id_t id, void *cb_data)
 			continue;
 		}
 
-		if (dev->id == id) {
+		if (dev->id != id) {
+			continue;
+		}
+
+		uint32_t class_rev = pcie_conf_read(bdf, PCIE_CONF_CLASSREV);
+
+		if (dev->class_rev == (class_rev & dev->class_rev_mask)) {
 			dev->bdf = bdf;
+			dev->class_rev = class_rev;
 			data->found++;
 			break;
 		}
@@ -539,4 +558,4 @@ static int pcie_init(void)
 #define PCIE_SYS_INIT_LEVEL	PRE_KERNEL_1
 #endif
 
-SYS_INIT(pcie_init, PCIE_SYS_INIT_LEVEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
+SYS_INIT(pcie_init, PCIE_SYS_INIT_LEVEL, CONFIG_PCIE_INIT_PRIORITY);

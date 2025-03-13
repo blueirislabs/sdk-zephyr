@@ -3,13 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/kernel.h>
 #include <zephyr/drivers/regulator.h>
+
+static void regulator_delay(uint32_t delay_us)
+{
+	if (delay_us > 0U) {
+#ifdef CONFIG_MULTITHREADING
+		k_sleep(K_USEC(delay_us));
+#else
+		k_busy_wait(delay_us);
+#endif
+	}
+}
 
 void regulator_common_data_init(const struct device *dev)
 {
 	struct regulator_common_data *data = dev->data;
 
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 	(void)k_mutex_init(&data->lock);
+#endif
 	data->refcnt = 0;
 }
 
@@ -65,6 +79,7 @@ int regulator_common_init(const struct device *dev, bool is_enabled)
 			return ret;
 		}
 
+		regulator_delay(config->startup_delay_us);
 		data->refcnt++;
 	}
 
@@ -88,7 +103,9 @@ int regulator_enable(const struct device *dev)
 		return 0;
 	}
 
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 	(void)k_mutex_lock(&data->lock, K_FOREVER);
+#endif
 
 	data->refcnt++;
 
@@ -96,10 +113,14 @@ int regulator_enable(const struct device *dev)
 		ret = api->enable(dev);
 		if (ret < 0) {
 			data->refcnt--;
+		} else {
+			regulator_delay(config->off_on_delay_us);
 		}
 	}
 
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 	k_mutex_unlock(&data->lock);
+#endif
 
 	return ret;
 }
@@ -113,9 +134,13 @@ bool regulator_is_enabled(const struct device *dev)
 	if ((config->flags & REGULATOR_ALWAYS_ON) != 0U) {
 		enabled = true;
 	} else {
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 		(void)k_mutex_lock(&data->lock, K_FOREVER);
+#endif
 		enabled = data->refcnt != 0;
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 		k_mutex_unlock(&data->lock);
+#endif
 	}
 
 	return enabled;
@@ -138,7 +163,9 @@ int regulator_disable(const struct device *dev)
 		return 0;
 	}
 
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 	(void)k_mutex_lock(&data->lock, K_FOREVER);
+#endif
 
 	data->refcnt--;
 
@@ -149,7 +176,9 @@ int regulator_disable(const struct device *dev)
 		}
 	}
 
+#ifdef CONFIG_REGULATOR_THREAD_SAFE_REFCNT
 	k_mutex_unlock(&data->lock);
+#endif
 
 	return ret;
 }

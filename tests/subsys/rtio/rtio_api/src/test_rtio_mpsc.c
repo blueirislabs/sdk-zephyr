@@ -7,6 +7,7 @@
 #include <zephyr/ztest.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util_loops.h>
+#include <zephyr/timing/timing.h>
 #include <zephyr/rtio/rtio_spsc.h>
 #include <zephyr/rtio/rtio_mpsc.h>
 
@@ -25,14 +26,15 @@ static struct rtio_mpsc_node push_pop_nodes[2];
 ZTEST(rtio_mpsc, test_push_pop)
 {
 
-	struct rtio_mpsc_node *node, *head, *stub, *next, *tail;
+	mpsc_ptr_t node, head;
+	struct rtio_mpsc_node *stub, *next, *tail;
 
 	rtio_mpsc_init(&push_pop_q);
 
-	head = atomic_ptr_get(&push_pop_q.head);
+	head = mpsc_ptr_get(push_pop_q.head);
 	tail = push_pop_q.tail;
 	stub = &push_pop_q.stub;
-	next = atomic_ptr_get(&stub->next);
+	next = stub->next;
 
 	zassert_equal(head, stub, "Head should point at stub");
 	zassert_equal(tail, stub, "Tail should point at stub");
@@ -43,12 +45,12 @@ ZTEST(rtio_mpsc, test_push_pop)
 
 	rtio_mpsc_push(&push_pop_q, &push_pop_nodes[0]);
 
-	head = atomic_ptr_get(&push_pop_q.head);
+	head = mpsc_ptr_get(push_pop_q.head);
 
 	zassert_equal(head, &push_pop_nodes[0], "Queue head should point at push_pop_node");
-	next = atomic_ptr_get(&push_pop_nodes[0].next);
+	next = mpsc_ptr_get(push_pop_nodes[0].next);
 	zassert_is_null(next, NULL, "push_pop_node next should point at null");
-	next = atomic_ptr_get(&push_pop_q.stub.next);
+	next = mpsc_ptr_get(push_pop_q.stub.next);
 	zassert_equal(next, &push_pop_nodes[0], "Queue stub should point at push_pop_node");
 	tail = push_pop_q.tail;
 	stub = &push_pop_q.stub;
@@ -100,6 +102,10 @@ static struct rtio_mpsc mpsc_q;
 
 static void mpsc_consumer(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	struct rtio_mpsc_node *n;
 	struct mpsc_node *nn;
 
@@ -122,6 +128,10 @@ static void mpsc_consumer(void *p1, void *p2, void *p3)
 
 static void mpsc_producer(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	struct mpsc_node *n;
 	uint32_t id = (uint32_t)(uintptr_t)p1;
 
@@ -161,7 +171,7 @@ ZTEST(rtio_mpsc, test_mpsc_threaded)
 	TC_PRINT("starting consumer\n");
 	mpsc_tinfo[0].tid =
 		k_thread_create(&mpsc_thread[0], mpsc_stack[0], MPSC_STACK_SIZE,
-				(k_thread_entry_t)mpsc_consumer,
+				mpsc_consumer,
 				NULL, NULL, NULL,
 				K_PRIO_PREEMPT(5),
 				K_INHERIT_PERMS, K_NO_WAIT);
@@ -170,7 +180,7 @@ ZTEST(rtio_mpsc, test_mpsc_threaded)
 		TC_PRINT("starting producer %i\n", i);
 		mpsc_tinfo[i].tid =
 			k_thread_create(&mpsc_thread[i], mpsc_stack[i], MPSC_STACK_SIZE,
-					(k_thread_entry_t)mpsc_producer,
+					mpsc_producer,
 					(void *)(uintptr_t)i, NULL, NULL,
 					K_PRIO_PREEMPT(5),
 					K_INHERIT_PERMS, K_NO_WAIT);
@@ -180,6 +190,34 @@ ZTEST(rtio_mpsc, test_mpsc_threaded)
 		TC_PRINT("joining mpsc thread %d\n", i);
 		k_thread_join(mpsc_tinfo[i].tid, K_FOREVER);
 	}
+}
+
+#define THROUGHPUT_ITERS 100000
+
+ZTEST(rtio_mpsc, test_mpsc_throughput)
+{
+	struct rtio_mpsc_node node;
+	timing_t start_time, end_time;
+
+	rtio_mpsc_init(&mpsc_q);
+	timing_init();
+	timing_start();
+
+	start_time = timing_counter_get();
+
+	for (int i = 0; i < THROUGHPUT_ITERS; i++) {
+		rtio_mpsc_push(&mpsc_q, &node);
+
+		rtio_mpsc_pop(&mpsc_q);
+	}
+
+	end_time = timing_counter_get();
+
+	uint64_t cycles = timing_cycles_get(&start_time, &end_time);
+	uint64_t ns = timing_cycles_to_ns(cycles);
+
+	TC_PRINT("%llu ns for %d iterations, %llu ns per op\n", ns,
+		 THROUGHPUT_ITERS, ns/THROUGHPUT_ITERS);
 }
 
 ZTEST_SUITE(rtio_mpsc, NULL, NULL, NULL, NULL, NULL);

@@ -14,8 +14,9 @@
 #include <stdlib.h>
 #include <zephyr/app_memory/app_memdomain.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/barrier.h>
 #include <zephyr/debug/stack.h>
-#include <zephyr/syscall_handler.h>
+#include <zephyr/internal/syscall_handler.h>
 #include "test_syscall.h"
 #include <zephyr/sys/libc-hooks.h> /* for z_libc_partition */
 
@@ -145,8 +146,8 @@ ZTEST_USER(userspace, test_write_control)
 	msr_value = __get_CONTROL();
 	msr_value &= ~(CONTROL_nPRIV_Msk);
 	__set_CONTROL(msr_value);
-	__DSB();
-	__ISB();
+	barrier_dsync_fence_full();
+	barrier_isync_fence_full();
 	msr_value = __get_CONTROL();
 	zassert_true((msr_value & (CONTROL_nPRIV_Msk)),
 		     "Write to control register was successful");
@@ -326,7 +327,7 @@ ZTEST_USER(userspace, test_write_kerntext)
 	/* Try to write to kernel text. */
 	set_fault(K_ERR_CPU_EXCEPTION);
 
-	memset(&z_is_thread_essential, 0, 4);
+	memset(&k_current_get, 0, 4);
 	zassert_unreachable("Write to kernel text did not fault");
 }
 
@@ -450,8 +451,11 @@ ZTEST_USER(userspace, test_pass_noperms_object)
 }
 
 
-void thread_body(void)
+void thread_body(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 }
 
 /**
@@ -464,7 +468,7 @@ ZTEST_USER(userspace, test_start_kernel_thread)
 	/* Try to start a kernel thread from a usermode thread */
 	set_fault(K_ERR_KERNEL_OOPS);
 	k_thread_create(&test_thread, test_stack, STACKSIZE,
-			(k_thread_entry_t)thread_body, NULL, NULL, NULL,
+			thread_body, NULL, NULL, NULL,
 			K_PRIO_PREEMPT(1), K_INHERIT_PERMS,
 			K_NO_WAIT);
 	zassert_unreachable("Create a kernel thread did not fault");
@@ -567,8 +571,12 @@ ZTEST_USER(userspace, test_access_after_revoke)
 	zassert_unreachable("Using revoked object did not fault");
 }
 
-static void umode_enter_func(void)
+static void umode_enter_func(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	zassert_true(k_is_user_context(),
 		     "Thread did not enter user mode");
 }
@@ -585,7 +593,7 @@ ZTEST(userspace, test_user_mode_enter)
 {
 	clear_fault();
 
-	k_thread_user_mode_enter((k_thread_entry_t)umode_enter_func,
+	k_thread_user_mode_enter(umode_enter_func,
 				 NULL, NULL, NULL);
 }
 
@@ -853,28 +861,28 @@ static struct k_sem recycle_sem;
  * @details Test recycle valid/invalid kernel object, see if
  * perms_count changes as expected.
  *
- * @see z_object_recycle(), z_object_find()
+ * @see k_object_recycle(), k_object_find()
  *
  * @ingroup kernel_memprotect_tests
  */
 ZTEST(userspace, test_object_recycle)
 {
-	struct z_object *ko;
+	struct k_object *ko;
 	int perms_count = 0;
 	int dummy = 0;
 
 	/* Validate recycle invalid objects, after recycling this invalid
 	 * object, perms_count should finally still be 1.
 	 */
-	ko = z_object_find(&dummy);
+	ko = k_object_find(&dummy);
 	zassert_true(ko == NULL, "not an invalid object");
 
-	z_object_recycle(&dummy);
+	k_object_recycle(&dummy);
 
-	ko = z_object_find(&recycle_sem);
+	ko = k_object_find(&recycle_sem);
 	(void)memset(ko->perms, 0xFF, sizeof(ko->perms));
 
-	z_object_recycle(&recycle_sem);
+	k_object_recycle(&recycle_sem);
 	zassert_true(ko != NULL, "kernel object not found");
 	zassert_true(ko->flags & K_OBJ_FLAG_INITIALIZED,
 		     "object wasn't marked as initialized");
@@ -1015,6 +1023,67 @@ ZTEST(userspace, test_tls_pointer)
 #endif
 }
 
+K_APP_BMEM(default_part) volatile bool kernel_only_thread_ran;
+K_APP_BMEM(default_part) volatile bool kernel_only_thread_user_ran;
+static K_SEM_DEFINE(kernel_only_thread_run_sem, 0, 1);
+
+void kernel_only_thread_user_entry(void *p1, void *p2, void *p3)
+{
+	printk("kernel only thread in user mode\n");
+
+	kernel_only_thread_user_ran = true;
+}
+
+void kernel_only_thread_entry(void *p1, void *p2, void *p3)
+{
+	k_sem_take(&kernel_only_thread_run_sem, K_FOREVER);
+
+	printk("kernel only thread in kernel mode\n");
+
+	/* Some architectures emit kernel OOPS instead of panic. */
+#if defined(CONFIG_ARM64)
+	set_fault(K_ERR_KERNEL_OOPS);
+#else
+	set_fault(K_ERR_KERNEL_PANIC);
+#endif
+
+	kernel_only_thread_ran = true;
+
+	k_thread_user_mode_enter(kernel_only_thread_user_entry, NULL, NULL, NULL);
+}
+
+#ifdef CONFIG_MMU
+#define KERNEL_ONLY_THREAD_STACK_SIZE (ROUND_UP(1024, CONFIG_MMU_PAGE_SIZE))
+#elif CONFIG_64BIT
+#define KERNEL_ONLY_THREAD_STACK_SIZE (2048)
+#else
+#define KERNEL_ONLY_THREAD_STACK_SIZE (1024)
+#endif
+
+static K_KERNEL_THREAD_DEFINE(kernel_only_thread,
+			      KERNEL_ONLY_THREAD_STACK_SIZE,
+			      kernel_only_thread_entry, NULL, NULL, NULL,
+			      0, 0, 0);
+
+ZTEST(userspace, test_kernel_only_thread)
+{
+	kernel_only_thread_ran = false;
+	kernel_only_thread_user_ran = false;
+
+	k_sem_give(&kernel_only_thread_run_sem);
+
+	k_sleep(K_MSEC(500));
+
+	if (!kernel_only_thread_ran) {
+		printk("kernel only thread not running in kernel mode!\n");
+		ztest_test_fail();
+	}
+
+	if (kernel_only_thread_user_ran) {
+		printk("kernel only thread should not have run in user mode!\n");
+		ztest_test_fail();
+	}
+}
 
 void *userspace_setup(void)
 {
@@ -1053,6 +1122,7 @@ void *userspace_setup(void)
 #endif
 	k_thread_access_grant(k_current_get(),
 			      &test_thread, &test_stack,
+			      &kernel_only_thread_run_sem,
 			      &test_revoke_sem, &kpipe);
 	return NULL;
 }

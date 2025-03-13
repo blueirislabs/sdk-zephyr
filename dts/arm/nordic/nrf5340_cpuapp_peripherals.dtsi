@@ -38,12 +38,16 @@ power: power@5000 {
 	#size-cells = <1>;
 
 	gpregret1: gpregret1@551c {
+		#address-cells = <1>;
+		#size-cells = <1>;
 		compatible = "nordic,nrf-gpregret";
 		reg = <0x551c 0x1>;
 		status = "okay";
 	};
 
 	gpregret2: gpregret2@5520 {
+		#address-cells = <1>;
+		#size-cells = <1>;
 		compatible = "nordic,nrf-gpregret";
 		reg = <0x5520 0x1>;
 		status = "okay";
@@ -74,6 +78,7 @@ i2c0: i2c@8000 {
 	reg = <0x8000 0x1000>;
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	interrupts = <8 NRF_DEFAULT_IRQ_PRIORITY>;
+	easydma-maxcnt-bits = <16>;
 	status = "disabled";
 };
 
@@ -114,6 +119,7 @@ i2c1: i2c@9000 {
 	reg = <0x9000 0x1000>;
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	interrupts = <9 NRF_DEFAULT_IRQ_PRIORITY>;
+	easydma-maxcnt-bits = <16>;
 	status = "disabled";
 };
 
@@ -167,6 +173,7 @@ i2c2: i2c@b000 {
 	reg = <0xb000 0x1000>;
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	interrupts = <11 NRF_DEFAULT_IRQ_PRIORITY>;
+	easydma-maxcnt-bits = <16>;
 	status = "disabled";
 };
 
@@ -207,6 +214,7 @@ i2c3: i2c@c000 {
 	reg = <0xc000 0x1000>;
 	clock-frequency = <I2C_BITRATE_STANDARD>;
 	interrupts = <12 NRF_DEFAULT_IRQ_PRIORITY>;
+	easydma-maxcnt-bits = <16>;
 	status = "disabled";
 };
 
@@ -518,6 +526,7 @@ gpio0: gpio@842500 {
 	#gpio-cells = <2>;
 	status = "disabled";
 	port = <0>;
+	gpiote-instance = <&gpiote>;
 };
 
 gpio1: gpio@842800 {
@@ -528,6 +537,7 @@ gpio1: gpio@842800 {
 	ngpios = <16>;
 	status = "disabled";
 	port = <1>;
+	gpiote-instance = <&gpiote>;
 };
 
 ieee802154: ieee802154 {

@@ -17,9 +17,9 @@
 #include <kernel_internal.h>
 #include <zephyr/linker/linker-defs.h>
 
-__weak void z_arm64_mm_init(bool is_primary_core) { }
-
 extern void z_arm64_mm_init(bool is_primary_core);
+
+__weak void z_arm64_mm_init(bool is_primary_core) { }
 
 /*
  * These simple memset/memcpy alternatives are necessary as the optimized
@@ -68,6 +68,7 @@ void z_arm64_prep_c(void)
 
 	CODE_UNREACHABLE;
 }
+
 
 #if CONFIG_MP_MAX_NUM_CPUS > 1
 extern FUNC_NORETURN void z_arm64_secondary_start(void);

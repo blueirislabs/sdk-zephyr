@@ -1,15 +1,12 @@
 /*
- * Copyright 2022 NXP
+ * Copyright 2022-2023 NXP
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <soc.h>
 #include <OsIf.h>
 #include <OsIf_Cfg_TypesDef.h>
-
-#if defined(CONFIG_SOC_S32Z27_R52)
-#include <S32Z2_MSCM.h>
-#endif
 
 /* Required by OsIf timer initialization but not used with Zephyr, so no values configured */
 static const OsIf_ConfigType osif_config;

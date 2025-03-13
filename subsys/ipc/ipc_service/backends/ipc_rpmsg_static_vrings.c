@@ -8,6 +8,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/cache.h>
 #include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <zephyr/sys/atomic.h>
 
 #include <zephyr/ipc/ipc_service_backend.h>
@@ -95,7 +96,7 @@ static bool check_endpoints_freed(struct ipc_rpmsg_instance *rpmsg_inst)
 	for (size_t i = 0; i < NUM_ENDPOINTS; i++) {
 		rpmsg_ept = &rpmsg_inst->endpoint[i];
 
-		if (strcmp("", rpmsg_ept->name) != 0) {
+		if (rpmsg_ept->bound == true) {
 			return false;
 		}
 	}
@@ -250,12 +251,34 @@ static int vr_shm_configure(struct ipc_static_vrings *vr, const struct backend_c
 		return -ENOMEM;
 	}
 
-	vr->shm_addr = conf->shm_addr + VDEV_STATUS_SIZE;
-	vr->shm_size = shm_size(num_desc, conf->buffer_size) - VDEV_STATUS_SIZE;
+	/*
+	 * conf->shm_addr  +--------------+  vr->status_reg_addr
+	 *		   |    STATUS    |
+	 *		   +--------------+  vr->shm_addr
+	 *		   |              |
+	 *		   |              |
+	 *		   |   RX BUFS    |
+	 *		   |              |
+	 *		   |              |
+	 *		   +--------------+
+	 *		   |              |
+	 *		   |              |
+	 *		   |   TX BUFS    |
+	 *		   |              |
+	 *		   |              |
+	 *		   +--------------+  vr->rx_addr (aligned)
+	 *		   |   RX VRING   |
+	 *		   +--------------+  vr->tx_addr (aligned)
+	 *		   |   TX VRING   |
+	 *		   +--------------+
+	 */
+
+	vr->shm_addr = ROUND_UP(conf->shm_addr + VDEV_STATUS_SIZE, MEM_ALIGNMENT);
+	vr->shm_size = shm_size(num_desc, conf->buffer_size);
 
 	vr->rx_addr = vr->shm_addr + VRING_COUNT * vq_ring_size(num_desc, conf->buffer_size);
-	vr->tx_addr = ROUND_UP(vr->rx_addr + vring_size(num_desc, VRING_ALIGNMENT),
-			       VRING_ALIGNMENT);
+	vr->tx_addr = ROUND_UP(vr->rx_addr + vring_size(num_desc, MEM_ALIGNMENT),
+			       MEM_ALIGNMENT);
 
 	vr->status_reg_addr = conf->shm_addr;
 
@@ -433,6 +456,7 @@ static int deregister_ept(const struct device *instance, void *token)
 {
 	struct backend_data_t *data = instance->data;
 	struct ipc_rpmsg_ept *rpmsg_ept;
+	static struct k_work_sync sync;
 
 	/* Instance is not ready */
 	if (atomic_get(&data->state) != STATE_INITED) {
@@ -445,6 +469,13 @@ static int deregister_ept(const struct device *instance, void *token)
 	if (!rpmsg_ept) {
 		return -ENOENT;
 	}
+
+	/* Drain pending work items before tearing down channel.
+	 *
+	 * Note: `k_work_flush` Faults on Cortex-M33 with "illegal use of EPSR"
+	 * if `sync` is not declared static.
+	 */
+	k_work_flush(&data->mbox_work, &sync);
 
 	rpmsg_destroy_ept(&rpmsg_ept->ep);
 
@@ -736,17 +767,36 @@ static int backend_init(const struct device *instance)
 
 	data->role = conf->role;
 
+#if defined(CONFIG_CACHE_MANAGEMENT) && defined(CONFIG_DCACHE)
+	__ASSERT((VDEV_STATUS_SIZE % sys_cache_data_line_size_get()) == 0U,
+		  "VDEV status area must be aligned to the cache line");
+	__ASSERT((MEM_ALIGNMENT % sys_cache_data_line_size_get()) == 0U,
+		  "Static VRINGs must be aligned to the cache line");
+	__ASSERT((conf->buffer_size % sys_cache_data_line_size_get()) == 0U,
+		  "Buffers must be aligned to the cache line ");
+#endif
+
 	k_mutex_init(&data->rpmsg_inst.mtx);
 	atomic_set(&data->state, STATE_READY);
 
 	return 0;
 }
 
-#define BACKEND_CONFIG_POPULATE(i)							\
-	{										\
+
+#if defined(CONFIG_ARCH_POSIX)
+#define BACKEND_PRE(i) extern char IPC##i##_shm_buffer[];
+#define BACKEND_SHM_ADDR(i) (const uintptr_t)IPC##i##_shm_buffer
+#else
+#define BACKEND_PRE(i)
+#define BACKEND_SHM_ADDR(i) DT_REG_ADDR(DT_INST_PHANDLE(i, memory_region))
+#endif /* defined(CONFIG_ARCH_POSIX) */
+
+#define DEFINE_BACKEND_DEVICE(i)							\
+	BACKEND_PRE(i)									\
+	static struct backend_config_t backend_config_##i = {				\
 		.role = DT_ENUM_IDX_OR(DT_DRV_INST(i), role, ROLE_HOST),		\
 		.shm_size = DT_REG_SIZE(DT_INST_PHANDLE(i, memory_region)),		\
-		.shm_addr = DT_REG_ADDR(DT_INST_PHANDLE(i, memory_region)),		\
+		.shm_addr = BACKEND_SHM_ADDR(i),					\
 		.mbox_tx = MBOX_DT_CHANNEL_GET(DT_DRV_INST(i), tx),			\
 		.mbox_rx = MBOX_DT_CHANNEL_GET(DT_DRV_INST(i), rx),			\
 		.wq_prio = COND_CODE_1(DT_INST_NODE_HAS_PROP(i, zephyr_priority),	\
@@ -758,10 +808,8 @@ static int backend_init(const struct device *instance)
 		.buffer_size = DT_INST_PROP_OR(i, zephyr_buffer_size,			\
 					       RPMSG_BUFFER_SIZE),			\
 		.id = i,								\
-	}
-
-#define BACKEND_DEVICE_DEFINE(i)							\
-	static struct backend_config_t backend_config_##i = BACKEND_CONFIG_POPULATE(i);	\
+	};										\
+											\
 	static struct backend_data_t backend_data_##i;					\
 											\
 	DEVICE_DT_INST_DEFINE(i,							\
@@ -773,23 +821,20 @@ static int backend_init(const struct device *instance)
 			 CONFIG_IPC_SERVICE_REG_BACKEND_PRIORITY,			\
 			 &backend_ops);
 
-DT_INST_FOREACH_STATUS_OKAY(BACKEND_DEVICE_DEFINE)
+DT_INST_FOREACH_STATUS_OKAY(DEFINE_BACKEND_DEVICE)
 
-#define BACKEND_CONFIG_DEFINE(i) BACKEND_CONFIG_POPULATE(i),
+#define BACKEND_CONFIG_INIT(n) &backend_config_##n,
 
 #if defined(CONFIG_IPC_SERVICE_BACKEND_RPMSG_SHMEM_RESET)
 static int shared_memory_prepare(void)
 {
-	const struct backend_config_t *backend_config;
-	const struct backend_config_t backend_configs[] = {
-		DT_INST_FOREACH_STATUS_OKAY(BACKEND_CONFIG_DEFINE)
+	static const struct backend_config_t *config[] = {
+		DT_INST_FOREACH_STATUS_OKAY(BACKEND_CONFIG_INIT)
 	};
 
-	for (backend_config = backend_configs;
-	     backend_config < backend_configs + ARRAY_SIZE(backend_configs);
-	     backend_config++) {
-		if (backend_config->role == ROLE_HOST) {
-			memset((void *) backend_config->shm_addr, 0, VDEV_STATUS_SIZE);
+	for (int i = 0; i < DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT); i++) {
+		if (config[i]->role == ROLE_HOST) {
+			memset((void *) config[i]->shm_addr, 0, VDEV_STATUS_SIZE);
 		}
 	}
 

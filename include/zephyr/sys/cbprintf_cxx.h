@@ -88,6 +88,57 @@ static inline int z_cbprintf_cxx_is_pchar(T arg, bool const_as_fixed)
 	_Pragma("GCC diagnostic pop")
 }
 
+/* C++ version for determining if variable type is numeric and fits in 32 bit word. */
+static inline int z_cbprintf_cxx_is_word_num(char)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(unsigned char)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(short)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(unsigned short)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(int)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(unsigned int)
+{
+	return 1;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(long)
+{
+	return (sizeof(long) <= sizeof(uint32_t)) ? 1 : 0;
+}
+
+static inline int z_cbprintf_cxx_is_word_num(unsigned long)
+{
+	return (sizeof(long) <= sizeof(uint32_t)) ? 1 : 0;
+}
+
+template < typename T >
+static inline int z_cbprintf_cxx_is_word_num(T arg)
+{
+	ARG_UNUSED(arg);
+	_Pragma("GCC diagnostic push")
+	_Pragma("GCC diagnostic ignored \"-Wpointer-arith\"")
+	return 0;
+	_Pragma("GCC diagnostic pop")
+}
+
 /* C++ version for calculating argument size. */
 static inline size_t z_cbprintf_cxx_arg_size(float f)
 {
@@ -96,17 +147,12 @@ static inline size_t z_cbprintf_cxx_arg_size(float f)
 	return sizeof(double);
 }
 
-static inline size_t z_cbprintf_cxx_arg_size(void *p)
-{
-	ARG_UNUSED(p);
-
-	return sizeof(void *);
-}
-
 template < typename T >
 static inline size_t z_cbprintf_cxx_arg_size(T arg)
 {
-	return sizeof(arg + 0);
+	ARG_UNUSED(arg);
+
+	return MAX(sizeof(T), sizeof(int));
 }
 
 /* C++ version for storing arguments. */

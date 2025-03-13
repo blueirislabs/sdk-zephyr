@@ -7,7 +7,7 @@
 /* Base driver compatible */
 #define DT_DRV_COMPAT nxp_flexcan
 
-/* CAN-FD extension compatible */
+/* CAN FD extension compatible */
 #define FLEXCAN_FD_DRV_COMPAT nxp_flexcan_fd
 
 #include <zephyr/kernel.h>
@@ -20,10 +20,7 @@
 #include <fsl_flexcan.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/irq.h>
-
-#ifdef CONFIG_PINCTRL
 #include <zephyr/drivers/pinctrl.h>
-#endif
 
 LOG_MODULE_REGISTER(can_mcux_flexcan, CONFIG_CAN_LOG_LEVEL);
 
@@ -52,14 +49,19 @@ LOG_MODULE_REGISTER(can_mcux_flexcan, CONFIG_CAN_LOG_LEVEL);
 #define RX_START_IDX 0
 #endif
 
+/* The maximum number of message buffers for concurrent active instances */
+#ifdef CONFIG_CAN_MAX_MB
+#define MCUX_FLEXCAN_MAX_MB CONFIG_CAN_MAX_MB
+#else
+#define MCUX_FLEXCAN_MAX_MB FSL_FEATURE_FLEXCAN_HAS_MESSAGE_BUFFER_MAX_NUMBERn(0)
+#endif
+
 /*
  * RX message buffers (filters) will take up the first N message
  * buffers. The rest are available for TX use.
  */
 #define MCUX_FLEXCAN_MAX_RX (CONFIG_CAN_MAX_FILTER + RX_START_IDX)
-#define MCUX_FLEXCAN_MAX_TX \
-	(FSL_FEATURE_FLEXCAN_HAS_MESSAGE_BUFFER_MAX_NUMBERn(0) \
-	- MCUX_FLEXCAN_MAX_RX)
+#define MCUX_FLEXCAN_MAX_TX (MCUX_FLEXCAN_MAX_MB - MCUX_FLEXCAN_MAX_RX)
 
 /*
  * Convert from RX message buffer index to allocated filter ID and
@@ -107,9 +109,7 @@ struct mcux_flexcan_config {
 	void (*irq_disable_func)(void);
 	const struct device *phy;
 	uint32_t max_bitrate;
-#ifdef CONFIG_PINCTRL
 	const struct pinctrl_dev_config *pincfg;
-#endif /* CONFIG_PINCTRL */
 };
 
 struct mcux_flexcan_rx_callback {
@@ -182,7 +182,6 @@ static int mcux_flexcan_set_timing(const struct device *dev,
 				   const struct can_timing *timing)
 {
 	struct mcux_flexcan_data *data = dev->data;
-	uint8_t sjw_backup = data->timing.sjw;
 
 	if (!timing) {
 		return -EINVAL;
@@ -193,9 +192,6 @@ static int mcux_flexcan_set_timing(const struct device *dev,
 	}
 
 	data->timing = *timing;
-	if (timing->sjw == CAN_SJW_NO_CHANGE) {
-		data->timing.sjw = sjw_backup;
-	}
 
 	return 0;
 }
@@ -205,7 +201,6 @@ static int mcux_flexcan_set_timing_data(const struct device *dev,
 					const struct can_timing *timing_data)
 {
 	struct mcux_flexcan_data *data = dev->data;
-	uint8_t sjw_backup = data->timing_data.sjw;
 
 	if (!timing_data) {
 		return -EINVAL;
@@ -216,9 +211,6 @@ static int mcux_flexcan_set_timing_data(const struct device *dev,
 	}
 
 	data->timing_data = *timing_data;
-	if (timing_data->sjw == CAN_SJW_NO_CHANGE) {
-		data->timing_data.sjw = sjw_backup;
-	}
 
 	return 0;
 }
@@ -431,7 +423,7 @@ static int mcux_flexcan_stop(const struct device *dev)
 
 static int mcux_flexcan_set_mode(const struct device *dev, can_mode_t mode)
 {
-	can_mode_t supported = CAN_MODE_LOOPBACK | CAN_MODE_LISTENONLY;
+	can_mode_t supported = CAN_MODE_LOOPBACK | CAN_MODE_LISTENONLY | CAN_MODE_3_SAMPLES;
 	const struct mcux_flexcan_config *config = dev->config;
 	struct mcux_flexcan_data *data = dev->data;
 	uint32_t ctrl1;
@@ -451,7 +443,7 @@ static int mcux_flexcan_set_mode(const struct device *dev, can_mode_t mode)
 	}
 
 	if ((mode & CAN_MODE_FD) != 0 && (mode & CAN_MODE_3_SAMPLES) != 0) {
-		LOG_ERR("triple samling is not supported in CAN-FD mode");
+		LOG_ERR("triple samling is not supported in CAN FD mode");
 		return -ENOTSUP;
 	}
 
@@ -487,7 +479,7 @@ static int mcux_flexcan_set_mode(const struct device *dev, can_mode_t mode)
 #ifdef CONFIG_CAN_MCUX_FLEXCAN_FD
 	if (config->flexcan_fd) {
 		if ((mode & CAN_MODE_FD) != 0) {
-			/* Enable CAN-FD mode */
+			/* Enable CAN FD mode */
 			mcr |= CAN_MCR_FDEN_MASK;
 			data->fd_mode = true;
 
@@ -498,7 +490,7 @@ static int mcux_flexcan_set_mode(const struct device *dev, can_mode_t mode)
 				config->base->FDCTRL |= CAN_FDCTRL_TDCEN_MASK;
 			}
 		} else {
-			/* Disable CAN-FD mode */
+			/* Disable CAN FD mode */
 			mcr &= ~(CAN_MCR_FDEN_MASK);
 			data->fd_mode = false;
 		}
@@ -528,11 +520,11 @@ static void mcux_flexcan_from_can_frame(const struct can_frame *src,
 		dest->type = kFLEXCAN_FrameTypeRemote;
 	} else {
 		dest->type = kFLEXCAN_FrameTypeData;
+		dest->dataWord0 = sys_cpu_to_be32(src->data_32[0]);
+		dest->dataWord1 = sys_cpu_to_be32(src->data_32[1]);
 	}
 
 	dest->length = src->dlc;
-	dest->dataWord0 = sys_cpu_to_be32(src->data_32[0]);
-	dest->dataWord1 = sys_cpu_to_be32(src->data_32[1]);
 }
 
 static void mcux_flexcan_to_can_frame(const flexcan_frame_t *src,
@@ -549,11 +541,12 @@ static void mcux_flexcan_to_can_frame(const flexcan_frame_t *src,
 
 	if (src->type == kFLEXCAN_FrameTypeRemote) {
 		dest->flags |= CAN_FRAME_RTR;
+	} else {
+		dest->data_32[0] = sys_be32_to_cpu(src->dataWord0);
+		dest->data_32[1] = sys_be32_to_cpu(src->dataWord1);
 	}
 
 	dest->dlc = src->length;
-	dest->data_32[0] = sys_be32_to_cpu(src->dataWord0);
-	dest->data_32[1] = sys_be32_to_cpu(src->dataWord1);
 #ifdef CONFIG_CAN_RX_TIMESTAMP
 	dest->timestamp = src->timestamp;
 #endif /* CAN_RX_TIMESTAMP */
@@ -579,6 +572,10 @@ static void mcux_flexcan_fd_from_can_frame(const struct can_frame *src,
 		dest->type = kFLEXCAN_FrameTypeRemote;
 	} else {
 		dest->type = kFLEXCAN_FrameTypeData;
+
+		for (i = 0; i < ARRAY_SIZE(dest->dataWord); i++) {
+			dest->dataWord[i] = sys_cpu_to_be32(src->data_32[i]);
+		}
 	}
 
 	if ((src->flags & CAN_FRAME_FDF) != 0) {
@@ -590,9 +587,6 @@ static void mcux_flexcan_fd_from_can_frame(const struct can_frame *src,
 	}
 
 	dest->length = src->dlc;
-	for (i = 0; i < ARRAY_SIZE(dest->dataWord); i++) {
-		dest->dataWord[i] = sys_cpu_to_be32(src->data_32[i]);
-	}
 }
 
 static void mcux_flexcan_fd_to_can_frame(const flexcan_fd_frame_t *src,
@@ -611,6 +605,10 @@ static void mcux_flexcan_fd_to_can_frame(const flexcan_fd_frame_t *src,
 
 	if (src->type == kFLEXCAN_FrameTypeRemote) {
 		dest->flags |= CAN_FRAME_RTR;
+	} else {
+		for (i = 0; i < ARRAY_SIZE(dest->data_32); i++) {
+			dest->data_32[i] = sys_be32_to_cpu(src->dataWord[i]);
+		}
 	}
 
 	if (src->edl != 0) {
@@ -626,9 +624,7 @@ static void mcux_flexcan_fd_to_can_frame(const flexcan_fd_frame_t *src,
 	}
 
 	dest->dlc = src->length;
-	for (i = 0; i < ARRAY_SIZE(dest->data_32); i++) {
-		dest->data_32[i] = sys_be32_to_cpu(src->dataWord[i]);
-	}
+
 #ifdef CONFIG_CAN_RX_TIMESTAMP
 	dest->timestamp = src->timestamp;
 #endif /* CAN_RX_TIMESTAMP */
@@ -853,7 +849,7 @@ static int mcux_flexcan_add_rx_filter(const struct device *dev,
 	}
 
 #ifdef CONFIG_CAN_MCUX_FLEXCAN_FD
-	/* Defer starting FlexCAN-FD MBs unless started */
+	/* Defer starting FlexCAN FD MBs unless started */
 	if (!config->flexcan_fd || data->started) {
 #endif /* CONFIG_CAN_MCUX_FLEXCAN_FD */
 		status = mcux_flexcan_mb_start(dev, alloc);
@@ -926,9 +922,8 @@ static void mcux_flexcan_remove_rx_filter(const struct device *dev, int filter_i
 {
 	struct mcux_flexcan_data *data = dev->data;
 
-	if (filter_id >= MCUX_FLEXCAN_MAX_RX) {
-		LOG_ERR("Detach: Filter id >= MAX_RX (%d >= %d)", filter_id,
-			MCUX_FLEXCAN_MAX_RX);
+	if (filter_id < 0 || filter_id >= MCUX_FLEXCAN_MAX_RX) {
+		LOG_ERR("filter ID %d out of bounds", filter_id);
 		return;
 	}
 
@@ -938,7 +933,7 @@ static void mcux_flexcan_remove_rx_filter(const struct device *dev, int filter_i
 #ifdef CONFIG_CAN_MCUX_FLEXCAN_FD
 		const struct mcux_flexcan_config *config = dev->config;
 
-		/* Stop FlexCAN-FD MBs unless already in stopped mode */
+		/* Stop FlexCAN FD MBs unless already in stopped mode */
 		if (!config->flexcan_fd || data->started) {
 #endif /* CONFIG_CAN_MCUX_FLEXCAN_FD */
 			mcux_flexcan_mb_stop(dev, filter_id);
@@ -1203,6 +1198,7 @@ static int mcux_flexcan_init(const struct device *dev)
 			data->timing.phase_seg2);
 		LOG_DBG("Sample-point err : %d", err);
 	} else {
+		data->timing.sjw = config->sjw;
 		data->timing.prop_seg = config->prop_seg;
 		data->timing.phase_seg1 = config->phase_seg1;
 		data->timing.phase_seg2 = config->phase_seg2;
@@ -1210,6 +1206,13 @@ static int mcux_flexcan_init(const struct device *dev)
 		if (err) {
 			LOG_WRN("Bitrate error: %d", err);
 		}
+	}
+
+	/* Validate initial timing parameters */
+	err = can_set_timing(dev, &data->timing);
+	if (err != 0) {
+		LOG_ERR("failed to set timing (err %d)", err);
+		return -ENODEV;
 	}
 
 #ifdef CONFIG_CAN_MCUX_FLEXCAN_FD
@@ -1227,23 +1230,30 @@ static int mcux_flexcan_init(const struct device *dev)
 				data->timing_data.phase_seg2);
 			LOG_DBG("Sample-point err : %d", err);
 		} else {
-			data->timing_data.prop_seg = config->prop_seg;
-			data->timing_data.phase_seg1 = config->phase_seg1;
-			data->timing_data.phase_seg2 = config->phase_seg2;
+			data->timing_data.sjw = config->sjw_data;
+			data->timing_data.prop_seg = config->prop_seg_data;
+			data->timing_data.phase_seg1 = config->phase_seg1_data;
+			data->timing_data.phase_seg2 = config->phase_seg2_data;
 			err = can_calc_prescaler(dev, &data->timing_data, config->bitrate_data);
 			if (err) {
 				LOG_WRN("Bitrate error: %d", err);
 			}
 		}
 	}
+
+	/* Validate initial data phase timing parameters */
+	err = can_set_timing_data(dev, &data->timing_data);
+	if (err != 0) {
+		LOG_ERR("failed to set data phase timing (err %d)", err);
+		return -ENODEV;
+	}
+
 #endif /* CONFIG_CAN_MCUX_FLEXCAN_FD */
 
-#ifdef CONFIG_PINCTRL
 	err = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 	if (err != 0) {
 		return err;
 	}
-#endif
 
 	err = mcux_flexcan_get_core_clock(dev, &clock_freq);
 	if (err != 0) {
@@ -1253,7 +1263,7 @@ static int mcux_flexcan_init(const struct device *dev)
 	data->dev = dev;
 
 	FLEXCAN_GetDefaultConfig(&flexcan_config);
-	flexcan_config.maxMbNum = FSL_FEATURE_FLEXCAN_HAS_MESSAGE_BUFFER_MAX_NUMBERn(0);
+	flexcan_config.maxMbNum = MCUX_FLEXCAN_MAX_MB;
 	flexcan_config.clkSrc = config->clk_source;
 	flexcan_config.baudRate = clock_freq /
 	      (1U + data->timing.prop_seg + data->timing.phase_seg1 +
@@ -1434,14 +1444,6 @@ static const struct can_driver_api mcux_flexcan_fd_driver_api = {
 		FLEXCAN_IRQ_ENABLE_CODE(node_id, prop, idx); \
 	} while (false);
 
-#ifdef CONFIG_PINCTRL
-#define FLEXCAN_PINCTRL_DEFINE(id) PINCTRL_DT_INST_DEFINE(id);
-#define FLEXCAN_PINCTRL_INIT(id) .pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(id),
-#else
-#define FLEXCAN_PINCTRL_DEFINE(id)
-#define FLEXCAN_PINCTRL_INIT(id)
-#endif /* CONFIG_PINCTRL */
-
 #ifdef CONFIG_CAN_MCUX_FLEXCAN_FD
 #define FLEXCAN_MAX_BITRATE(id)							\
 	COND_CODE_1(DT_NODE_HAS_COMPAT(DT_DRV_INST(id), FLEXCAN_FD_DRV_COMPAT),	\
@@ -1460,7 +1462,7 @@ static const struct can_driver_api mcux_flexcan_fd_driver_api = {
 #endif /* !CONFIG_CAN_MCUX_FLEXCAN_FD */
 
 #define FLEXCAN_DEVICE_INIT_MCUX(id)					\
-	FLEXCAN_PINCTRL_DEFINE(id)					\
+	PINCTRL_DT_INST_DEFINE(id);					\
 									\
 	static void mcux_flexcan_irq_config_##id(const struct device *dev); \
 	static void mcux_flexcan_irq_enable_##id(void); \
@@ -1493,7 +1495,7 @@ static const struct can_driver_api mcux_flexcan_fd_driver_api = {
 		.phy = DEVICE_DT_GET_OR_NULL(DT_INST_PHANDLE(id, phys)),\
 		.max_bitrate = DT_INST_CAN_TRANSCEIVER_MAX_BITRATE(id,	\
 			FLEXCAN_MAX_BITRATE(id)),			\
-		FLEXCAN_PINCTRL_INIT(id)				\
+		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(id),		\
 	};								\
 									\
 	static struct mcux_flexcan_data mcux_flexcan_data_##id;		\

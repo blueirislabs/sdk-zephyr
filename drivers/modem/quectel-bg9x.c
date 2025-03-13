@@ -22,7 +22,9 @@ static K_KERNEL_STACK_DEFINE(modem_workq_stack, CONFIG_MODEM_QUECTEL_BG9X_RX_WOR
 NET_BUF_POOL_DEFINE(mdm_recv_pool, MDM_RECV_MAX_BUF, MDM_RECV_BUF_SIZE, 0, NULL);
 
 static const struct gpio_dt_spec power_gpio = GPIO_DT_SPEC_INST_GET(0, mdm_power_gpios);
+#if DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios)
 static const struct gpio_dt_spec reset_gpio = GPIO_DT_SPEC_INST_GET(0, mdm_reset_gpios);
+#endif
 #if DT_INST_NODE_HAS_PROP(0, mdm_dtr_gpios)
 static const struct gpio_dt_spec dtr_gpio = GPIO_DT_SPEC_INST_GET(0, mdm_dtr_gpios);
 #endif
@@ -844,8 +846,12 @@ static ssize_t offload_sendmsg(void *obj, const struct msghdr *msg, int flags)
 /* Func: modem_rx
  * Desc: Thread to process all messages received from the Modem.
  */
-static void modem_rx(void)
+static void modem_rx(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	while (true) {
 
 		/* Wait for incoming data */
@@ -885,6 +891,13 @@ static void modem_rssi_query_work(struct k_work *work)
  */
 static void pin_init(void)
 {
+#if !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios)
+	int ret = k_sem_take(&mdata.sem_pin_busy, K_SECONDS(3));
+
+	if (ret < 0) {
+		LOG_DBG("Timeout pin_init()");
+	}
+#endif /* !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios) */
 	LOG_INF("Setting Modem Pins");
 
 #if DT_INST_NODE_HAS_PROP(0, mdm_wdisable_gpios)
@@ -908,6 +921,18 @@ static void pin_init(void)
 	k_sleep(K_SECONDS(2));
 
 	LOG_INF("... Done!");
+
+#if !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios)
+	k_sem_give(&mdata.sem_pin_busy);
+#endif /* !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios) */
+}
+
+MODEM_CMD_DEFINE(on_cmd_unsol_normal_power_down)
+{
+	LOG_INF("Modem powering off. Re-power modem...");
+	pin_init();
+
+	return 0;
 }
 
 static const struct modem_cmd response_cmds[] = {
@@ -919,7 +944,8 @@ static const struct modem_cmd response_cmds[] = {
 static const struct modem_cmd unsol_cmds[] = {
 	MODEM_CMD("+QIURC: \"recv\",",	   on_cmd_unsol_recv,  1U, ""),
 	MODEM_CMD("+QIURC: \"closed\",",   on_cmd_unsol_close, 1U, ""),
-	MODEM_CMD("RDY", on_cmd_unsol_rdy, 0U, ""),
+	MODEM_CMD(MDM_UNSOL_RDY, on_cmd_unsol_rdy, 0U, ""),
+	MODEM_CMD("NORMAL POWER DOWN", on_cmd_unsol_normal_power_down, 0U, ""),
 };
 
 /* Commands sent to the modem to set it up at boot time. */
@@ -1138,6 +1164,9 @@ static int modem_init(const struct device *dev)
 {
 	int ret; ARG_UNUSED(dev);
 
+#if !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios)
+	k_sem_init(&mdata.sem_pin_busy,	 1, 1);
+#endif /* !DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios) */
 	k_sem_init(&mdata.sem_response,	 0, 1);
 	k_sem_init(&mdata.sem_tx_ready,	 0, 1);
 	k_sem_init(&mdata.sem_sock_conn, 0, 1);
@@ -1203,11 +1232,13 @@ static int modem_init(const struct device *dev)
 		goto error;
 	}
 
+#if DT_INST_NODE_HAS_PROP(0, mdm_reset_gpios)
 	ret = gpio_pin_configure_dt(&reset_gpio, GPIO_OUTPUT_LOW);
 	if (ret < 0) {
 		LOG_ERR("Failed to configure %s pin", "reset");
 		goto error;
 	}
+#endif
 
 #if DT_INST_NODE_HAS_PROP(0, mdm_dtr_gpios)
 	ret = gpio_pin_configure_dt(&dtr_gpio, GPIO_OUTPUT_LOW);
@@ -1237,7 +1268,7 @@ static int modem_init(const struct device *dev)
 	/* start RX thread */
 	k_thread_create(&modem_rx_thread, modem_rx_stack,
 			K_KERNEL_STACK_SIZEOF(modem_rx_stack),
-			(k_thread_entry_t) modem_rx,
+			modem_rx,
 			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 
 	/* Init RSSI query */

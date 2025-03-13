@@ -5,6 +5,7 @@ arch: xtensa
 toolchain:
   - xcc
   - xt-clang
+  - zephyr
 supported:
   - dma
 testing:
@@ -12,3 +13,4 @@ testing:
     - net
     - bluetooth
     - mcumgr
+vendor: intel

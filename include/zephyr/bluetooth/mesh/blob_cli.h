@@ -4,13 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/**
- * @file
- * @defgroup bt_mesh_blob_cli BLOB Transfer Client model API
- * @{
- * @brief API for the Binary Large Object Transfer Client model.
- */
-
 #ifndef ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_CLI_H_
 #define ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_CLI_H_
 
@@ -22,6 +15,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @defgroup bt_mesh_blob_cli Bluetooth Mesh BLOB Transfer Client model API
+ * @ingroup bt_mesh
+ * @{
+ */
 
 struct bt_mesh_blob_cli;
 
@@ -266,10 +265,10 @@ struct blob_cli_broadcast_ctx {
 	void (*send)(struct bt_mesh_blob_cli *cli, uint16_t dst);
 	/** Called after every @ref blob_cli_broadcast_ctx::send callback. */
 	void (*send_complete)(struct bt_mesh_blob_cli *cli, uint16_t dst);
-    /** If @ref blob_cli_broadcast_ctx::acked is true, called after all Target nodes
-     *  have confirmed reception by @ref blob_cli_broadcast_rsp. Otherwise, called
-     *  after transmission has been completed.
-     */
+	/** If @ref blob_cli_broadcast_ctx::acked is true, called after all Target nodes
+	 *  have confirmed reception by @ref blob_cli_broadcast_rsp. Otherwise, called
+	 *  after transmission has been completed.
+	 */
 	void (*next)(struct bt_mesh_blob_cli *cli);
 	/** If true, every transmission needs to be confirmed by @ref blob_cli_broadcast_rsp before
 	 * @ref blob_cli_broadcast_ctx::next is called.
@@ -292,7 +291,7 @@ struct bt_mesh_blob_cli {
 	const struct bt_mesh_blob_cli_cb *cb;
 
 	/* Runtime state */
-	struct bt_mesh_model *mod;
+	const struct bt_mesh_model *mod;
 
 	struct {
 		struct bt_mesh_blob_target *target;
@@ -425,10 +424,10 @@ extern const struct bt_mesh_model_op _bt_mesh_blob_cli_op[];
 extern const struct bt_mesh_model_cb _bt_mesh_blob_cli_cb;
 /** @endcond */
 
+/** @} */
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* ZEPHYR_INCLUDE_BLUETOOTH_MESH_BLOB_CLI_H_ */
-
-/** @} */

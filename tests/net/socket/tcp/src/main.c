@@ -31,21 +31,21 @@ static void test_bind(int sock, struct sockaddr *addr, socklen_t addrlen)
 {
 	zassert_equal(bind(sock, addr, addrlen),
 		      0,
-		      "bind failed");
+		      "bind failed with error %d", errno);
 }
 
 static void test_listen(int sock)
 {
 	zassert_equal(listen(sock, MAX_CONNS),
 		      0,
-		      "listen failed");
+		      "listen failed with error %d", errno);
 }
 
 static void test_connect(int sock, struct sockaddr *addr, socklen_t addrlen)
 {
 	zassert_equal(connect(sock, addr, addrlen),
 		      0,
-		      "connect failed");
+		      "connect failed with error %d", errno);
 
 	if (IS_ENABLED(CONFIG_NET_TC_THREAD_PREEMPTIVE)) {
 		/* Let the connection proceed */
@@ -554,6 +554,8 @@ ZTEST(net_socket_tcp, test_v4_broken_link)
 	test_close(s_sock);
 
 	restore_packet_loss_ratio();
+
+	k_sleep(TCP_TEARDOWN_TIMEOUT);
 }
 
 ZTEST_USER(net_socket_tcp, test_v4_sendto_recvfrom)
@@ -931,11 +933,18 @@ ZTEST(net_socket_tcp, test_connect_timeout)
 
 	test_close(c_sock);
 
+	/* If we have preemptive option set, then sleep here in order to allow
+	 * other part of the system to run and update itself.
+	 */
+	if (IS_ENABLED(CONFIG_NET_TC_THREAD_PREEMPTIVE)) {
+		k_sleep(K_MSEC(10));
+	}
+
 	/* After the client socket closing, the context count should be 0 */
 	net_context_foreach(calc_net_context, &count_after);
 
 	zassert_equal(count_after, 0,
-			    "net_context still in use");
+		      "net_context %d still in use", count_after);
 
 	restore_packet_loss_ratio();
 }
@@ -1707,6 +1716,9 @@ ZTEST(net_socket_tcp, test_v4_msg_waitall)
 	k_work_reschedule(&test_data.tx_work, K_MSEC(10));
 
 	ret = recv(new_sock, rx_buf, sizeof(rx_buf) - 1, MSG_WAITALL);
+	if (ret < 0) {
+		LOG_ERR("receive return val %i", ret);
+	}
 	zassert_equal(ret, sizeof(rx_buf) - 1, "Invalid length received");
 	zassert_mem_equal(rx_buf, TEST_STR_SMALL, sizeof(rx_buf) - 1,
 			  "Invalid data received");
@@ -1869,4 +1881,339 @@ static void *setup(void)
 	return NULL;
 }
 
-ZTEST_SUITE(net_socket_tcp, NULL, setup, NULL, NULL, NULL);
+struct close_data {
+	struct k_work_delayable work;
+	int fd;
+};
+
+static void close_work(struct k_work *work)
+{
+	struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+	struct close_data *data = CONTAINER_OF(dwork, struct close_data, work);
+
+	close(data->fd);
+}
+
+ZTEST(net_socket_tcp, test_close_while_recv)
+{
+	/* Blocking recv() should return an error after close() is
+	 * called from another thread.
+	 */
+	int c_sock;
+	int s_sock;
+	int new_sock;
+	struct sockaddr_in6 c_saddr, s_saddr;
+	struct sockaddr addr;
+	socklen_t addrlen = sizeof(addr);
+	struct close_data close_work_data;
+	char rx_buf[1];
+	ssize_t ret;
+
+	prepare_sock_tcp_v6(MY_IPV6_ADDR, ANY_PORT, &c_sock, &c_saddr);
+	prepare_sock_tcp_v6(MY_IPV6_ADDR, SERVER_PORT, &s_sock, &s_saddr);
+
+	test_bind(s_sock, (struct sockaddr *)&s_saddr, sizeof(s_saddr));
+	test_listen(s_sock);
+
+	/* Connect and accept that connection */
+	test_connect(c_sock, (struct sockaddr *)&s_saddr, sizeof(s_saddr));
+
+	test_accept(s_sock, &new_sock, &addr, &addrlen);
+
+	/* Schedule close() from workqueue */
+	k_work_init_delayable(&close_work_data.work, close_work);
+	close_work_data.fd = c_sock;
+	k_work_schedule(&close_work_data.work, K_MSEC(10));
+
+	/* Start blocking recv(), which should be unblocked by close() from
+	 * another thread and return an error.
+	 */
+	ret = recv(c_sock, rx_buf, sizeof(rx_buf), 0);
+	zassert_equal(ret, -1, "recv did not return error");
+	zassert_equal(errno, EINTR, "Unexpected errno value: %d", errno);
+
+	test_close(new_sock);
+	test_close(s_sock);
+
+	test_context_cleanup();
+}
+
+ZTEST(net_socket_tcp, test_close_while_accept)
+{
+	/* Blocking accept() should return an error after close() is
+	 * called from another thread.
+	 */
+	int s_sock;
+	int new_sock;
+	struct sockaddr_in6 s_saddr;
+	struct sockaddr addr;
+	socklen_t addrlen = sizeof(addr);
+	struct close_data close_work_data;
+
+	prepare_sock_tcp_v6(MY_IPV6_ADDR, SERVER_PORT, &s_sock, &s_saddr);
+
+	test_bind(s_sock, (struct sockaddr *)&s_saddr, sizeof(s_saddr));
+	test_listen(s_sock);
+
+	/* Schedule close() from workqueue */
+	k_work_init_delayable(&close_work_data.work, close_work);
+	close_work_data.fd = s_sock;
+	k_work_schedule(&close_work_data.work, K_MSEC(10));
+
+	/* Start blocking accept(), which should be unblocked by close() from
+	 * another thread and return an error.
+	 */
+	new_sock = accept(s_sock, &addr, &addrlen);
+	zassert_equal(new_sock, -1, "accept did not return error");
+	zassert_equal(errno, EINTR, "Unexpected errno value: %d", errno);
+
+	test_context_cleanup();
+}
+
+#undef read
+#define read(fd, buf, len) zsock_recv(fd, buf, len, 0)
+
+#undef write
+#define write(fd, buf, len) zsock_send(fd, buf, len, 0)
+
+enum test_ioctl_fionread_sockid {
+	CLIENT, SERVER, ACCEPT,
+};
+
+static void test_ioctl_fionread_setup(int af, int fd[3])
+{
+	socklen_t addrlen;
+	socklen_t addrlen2;
+	struct sockaddr_in6 addr;
+	struct sockaddr_in6 c_saddr;
+	struct sockaddr_in6 s_saddr;
+
+	fd[0] = -1;
+	fd[1] = -1;
+	fd[2] = -1;
+
+	switch (af) {
+	case AF_INET: {
+		prepare_sock_tcp_v4(MY_IPV4_ADDR, ANY_PORT, &fd[CLIENT],
+				    (struct sockaddr_in *)&c_saddr);
+		prepare_sock_tcp_v4(MY_IPV4_ADDR, SERVER_PORT, &fd[ACCEPT],
+				    (struct sockaddr_in *)&s_saddr);
+		addrlen = sizeof(struct sockaddr_in);
+	} break;
+
+	case AF_INET6: {
+		prepare_sock_tcp_v6(MY_IPV6_ADDR, ANY_PORT, &fd[CLIENT], &c_saddr);
+		prepare_sock_tcp_v6(MY_IPV6_ADDR, SERVER_PORT, &fd[ACCEPT], &s_saddr);
+		addrlen = sizeof(struct sockaddr_in6);
+	} break;
+
+	default:
+		zassert_true(false);
+		return;
+	}
+
+	addrlen2 = addrlen;
+
+	test_bind(fd[ACCEPT], (struct sockaddr *)&s_saddr, addrlen);
+	test_listen(fd[ACCEPT]);
+
+	test_connect(fd[CLIENT], (struct sockaddr *)&s_saddr, addrlen);
+	test_accept(fd[ACCEPT], &fd[SERVER], (struct sockaddr *)&addr, &addrlen2);
+}
+
+/* note: this is duplicated from tests/net/socket/socketpair/src/fionread.c */
+static void test_ioctl_fionread_common(int af)
+{
+	int avail;
+	uint8_t bytes[2];
+	/* server fd := 0, client fd := 1, accept fd := 2 */
+	enum fde {
+		SERVER,
+		CLIENT,
+		ACCEPT,
+	};
+	int fd[] = {-1, -1, -1};
+
+	test_ioctl_fionread_setup(af, fd);
+
+	/* both ends should have zero bytes available after being newly created */
+	for (enum fde i = SERVER; i <= CLIENT; ++i) {
+		avail = 42;
+		zassert_ok(ioctl(fd[i], ZFD_IOCTL_FIONREAD, &avail));
+		zassert_equal(0, avail, "exp: %d: act: %d", 0, avail);
+	}
+
+	/* write something to one end, check availability from the other end */
+	for (enum fde i = SERVER; i <= CLIENT; ++i) {
+		enum fde j = (i + 1) % (CLIENT + 1);
+
+		zassert_equal(1, write(fd[i], "\x42", 1));
+		zassert_equal(1, write(fd[i], "\x73", 1));
+		k_msleep(100);
+		zassert_ok(ioctl(fd[j], ZFD_IOCTL_FIONREAD, &avail));
+		zassert_equal(ARRAY_SIZE(bytes), avail, "exp: %d: act: %d", ARRAY_SIZE(bytes),
+			      avail);
+	}
+
+	/* read the other end, ensure availability is zero again */
+	for (enum fde i = SERVER; i <= CLIENT; ++i) {
+		int ex = ARRAY_SIZE(bytes);
+		int act = read(fd[i], bytes, ARRAY_SIZE(bytes));
+
+		zassert_equal(ex, act, "read() failed: errno: %d exp: %d act: %d", errno, ex, act);
+		zassert_ok(ioctl(fd[i], ZFD_IOCTL_FIONREAD, &avail));
+		zassert_equal(0, avail, "exp: %d: act: %d", 0, avail);
+	}
+}
+
+ZTEST(net_socket_tcp, test_ioctl_fionread_v4)
+{
+	test_ioctl_fionread_common(AF_INET);
+}
+ZTEST(net_socket_tcp, test_ioctl_fionread_v6)
+{
+	test_ioctl_fionread_common(AF_INET6);
+}
+
+/* Connect to peer which is not listening the test port and
+ * make sure select() returns proper error for the closed
+ * connection.
+ */
+ZTEST(net_socket_tcp, test_connect_and_wait_for_v4_select)
+{
+	struct sockaddr_in addr = { 0 };
+	struct in_addr v4addr;
+	int fd, flags, ret, optval;
+	socklen_t optlen = sizeof(optval);
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	flags = fcntl(fd, F_GETFL, 0);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	inet_pton(AF_INET, "127.0.0.1", (void *)&v4addr);
+
+	addr.sin_family = AF_INET;
+	net_ipaddr_copy(&addr.sin_addr, &v4addr);
+
+	/* There should be nobody serving this port */
+	addr.sin_port = htons(8088);
+
+	ret = connect(fd, (const struct sockaddr *)&addr, sizeof(addr));
+	zassert_equal(ret, -1, "connect succeed, %d", errno);
+	zassert_equal(errno, EINPROGRESS, "connect succeed, %d", errno);
+
+	/* Wait for the connection (this should fail eventually) */
+	while (1) {
+		fd_set wfds;
+		struct timeval tv = {
+			.tv_sec = 1,
+			.tv_usec = 0
+		};
+
+		FD_ZERO(&wfds);
+		FD_SET(fd, &wfds);
+
+		/* Check if the connection is there, this should timeout */
+		ret = select(fd + 1,  NULL, &wfds, NULL, &tv);
+		if (ret < 0) {
+			break;
+		}
+
+		if (ret > 0) {
+			if (FD_ISSET(fd, &wfds)) {
+				break;
+			}
+		}
+	}
+
+	zassert_true(ret > 0, "select failed, %d", errno);
+
+	/* Get the reason for the connect */
+	ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &optval, &optlen);
+	zassert_equal(ret, 0, "getsockopt failed, %d", errno);
+
+	/* If SO_ERROR is 0, then it means that connect succeed. Any
+	 * other value (errno) means that it failed.
+	 */
+	zassert_equal(optval, ECONNREFUSED, "unexpected connect status, %d", optval);
+
+	ret = close(fd);
+	zassert_equal(ret, 0, "close failed, %d", errno);
+}
+
+/* Connect to peer which is not listening the test port and
+ * make sure poll() returns proper error for the closed
+ * connection.
+ */
+ZTEST(net_socket_tcp, test_connect_and_wait_for_v4_poll)
+{
+	struct sockaddr_in addr = { 0 };
+	struct pollfd fds[1];
+	struct in_addr v4addr;
+	int fd, flags, ret, optval;
+	bool closed = false;
+	socklen_t optlen = sizeof(optval);
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	flags = fcntl(fd, F_GETFL, 0);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	inet_pton(AF_INET, "127.0.0.1", (void *)&v4addr);
+
+	addr.sin_family = AF_INET;
+	net_ipaddr_copy(&addr.sin_addr, &v4addr);
+
+	/* There should be nobody serving this port */
+	addr.sin_port = htons(8088);
+
+	ret = connect(fd, (const struct sockaddr *)&addr, sizeof(addr));
+	zassert_equal(ret, -1, "connect succeed, %d", errno);
+	zassert_equal(errno, EINPROGRESS, "connect succeed, %d", errno);
+
+	/* Wait for the connection (this should fail eventually) */
+	while (1) {
+		memset(fds, 0, sizeof(fds));
+		fds[0].fd = fd;
+		fds[0].events = POLLOUT;
+
+		/* Check if the connection is there, this should timeout */
+		ret = poll(fds, 1, 10);
+		if (ret < 0) {
+			break;
+		}
+
+		if (fds[0].revents > 0) {
+			if (fds[0].revents & POLLERR) {
+				closed = true;
+				break;
+			}
+		}
+	}
+
+	zassert_true(closed, "poll failed, %d", errno);
+
+	/* Get the reason for the connect */
+	ret = getsockopt(fd, SOL_SOCKET, SO_ERROR, &optval, &optlen);
+	zassert_equal(ret, 0, "getsockopt failed, %d", errno);
+
+	/* If SO_ERROR is 0, then it means that connect succeed. Any
+	 * other value (errno) means that it failed.
+	 */
+	zassert_equal(optval, ECONNREFUSED, "unexpected connect status, %d", optval);
+
+	ret = close(fd);
+	zassert_equal(ret, 0, "close failed, %d", errno);
+}
+
+static void after(void *arg)
+{
+	ARG_UNUSED(arg);
+
+	for (int i = 0; i < CONFIG_POSIX_MAX_FDS; ++i) {
+		(void)zsock_close(i);
+	}
+}
+
+ZTEST_SUITE(net_socket_tcp, NULL, setup, NULL, after, NULL);

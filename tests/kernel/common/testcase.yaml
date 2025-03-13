@@ -1,6 +1,10 @@
 common:
-  tags: base kernel userspace
-  min_flash: 33
+  tags:
+    - base
+    - kernel
+    - userspace
+  min_flash: 32
+  min_ram: 32
   timeout: 120
 tests:
   kernel.common:
@@ -19,6 +23,11 @@ tests:
       - native_posix
     extra_configs:
       - CONFIG_MISRA_SANE=y
+  kernel.common.minimallibc:
+    filter: CONFIG_MINIMAL_LIBC_SUPPORTED
+    tags: libc
+    extra_configs:
+      - CONFIG_MINIMAL_LIBC=y
   kernel.common.nano32:
     filter: not CONFIG_KERNEL_COHERENCE
     extra_configs:
@@ -34,3 +43,10 @@ tests:
     tags: picolibc
     extra_configs:
       - CONFIG_PICOLIBC=y
+  kernel.common.lto:
+    filter: CONFIG_ISR_TABLES_LOCAL_DECLARATION_SUPPORTED
+    tags: lto
+    extra_configs:
+      - CONFIG_TEST_USERSPACE=n
+      - CONFIG_ISR_TABLES_LOCAL_DECLARATION=y
+      - CONFIG_LTO=y

@@ -27,6 +27,8 @@
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/dns_resolve.h>
 #include <zephyr/net/socket_select.h>
+#include <zephyr/sys/iterable_sections.h>
+#include <zephyr/sys/fdtable.h>
 #include <zephyr/net/socket_ncs.h>
 #include <stdlib.h>
 
@@ -165,7 +167,40 @@ struct zsock_pollfd {
  *  This option accepts any value.
  */
 #define TLS_SESSION_CACHE_PURGE 13
-
+/** Write-only socket option to control DTLS CID.
+ *  The option accepts an integer, indicating the setting.
+ *  Accepted vaules for the option are: 0, 1 and 2.
+ *  Effective when set before connecting to the socket.
+ *  - 0 - DTLS CID will be disabled.
+ *  - 1 - DTLS CID will be enabled, and a 0 length CID value to be sent to the
+ *        peer.
+ *  - 2 - DTLS CID will be enabled, and the most recent value set with
+ *        TLS_DTLS_CID_VALUE will be sent to the peer. Otherwise, a random value
+ *        will be used.
+ */
+#define TLS_DTLS_CID 14
+/** Read-only socket option to get DTLS CID status.
+ *  The option accepts a pointer to an integer, indicating the setting upon
+ *  return.
+ *  Returned vaules for the option are:
+ *  - 0 - DTLS CID is disabled.
+ *  - 1 - DTLS CID is received on the downlink.
+ *  - 2 - DTLS CID is sent to the uplink.
+ *  - 3 - DTLS CID is used in both directions.
+ */
+#define TLS_DTLS_CID_STATUS 15
+/** Socket option to set or get the value of the DTLS connection ID to be
+ *  used for the DTLS session.
+ *  The option accepts a byte array, holding the CID value.
+ */
+#define TLS_DTLS_CID_VALUE 16
+/** Read-only socket option to get the value of the DTLS connection ID
+ *  received from the peer.
+ *  The option accepts a pointer to a byte array, holding the CID value upon
+ *  return. The optlen returned will be 0 if the peer did not provide a
+ *  connection ID, otherwise will contain the length of the CID value.
+ */
+#define TLS_DTLS_PEER_CID_VALUE 17
 /** @} */
 
 /* Valid values for TLS_PEER_VERIFY option */
@@ -184,6 +219,17 @@ struct zsock_pollfd {
 /* Valid values for TLS_SESSION_CACHE option */
 #define TLS_SESSION_CACHE_DISABLED 0 /**< Disable TLS session caching. */
 #define TLS_SESSION_CACHE_ENABLED 1 /**< Enable TLS session caching. */
+
+/* Valid values for TLS_DTLS_CID option */
+#define TLS_DTLS_CID_DISABLED		0
+#define TLS_DTLS_CID_SUPPORTED		1
+#define TLS_DTLS_CID_ENABLED		2
+
+/* Valid values for TLS_DTLS_CID_STATUS option */
+#define TLS_DTLS_CID_STATUS_DISABLED		0
+#define TLS_DTLS_CID_STATUS_DOWNLINK		1
+#define TLS_DTLS_CID_STATUS_UPLINK		2
+#define TLS_DTLS_CID_STATUS_BIDIRECTIONAL	3
 
 struct zsock_addrinfo {
 	struct zsock_addrinfo *ai_next;
@@ -452,6 +498,25 @@ static inline ssize_t zsock_recv(int sock, void *buf, size_t max_len,
  * @endrst
  */
 __syscall int zsock_fcntl(int sock, int cmd, int flags);
+
+/**
+ * @brief Control underlying socket parameters
+ *
+ * @details
+ * @rst
+ * See `POSIX.1-2017 article
+ * <https://pubs.opengroup.org/onlinepubs/9699919799/functions/ioctl.html>`__
+ * for normative description.
+ * This function enables querying or manipulating underlying socket parameters.
+ * Currently supported @p request values include ``ZFD_IOCTL_FIONBIO``, and
+ * ``ZFD_IOCTL_FIONREAD``, to set non-blocking mode, and query the number of
+ * bytes available to read, respectively.
+ * This function is also exposed as ``ioctl()``
+ * if :kconfig:option:`CONFIG_NET_SOCKETS_POSIX_NAMES` is defined (in which case
+ * it may conflict with generic POSIX ``ioctl()`` function).
+ * @endrst
+ */
+__syscall int zsock_ioctl(int sock, unsigned long request, va_list ap);
 
 /**
  * @brief Efficiently poll multiple sockets for events
@@ -764,6 +829,18 @@ static inline int zsock_fcntl_wrapper(int sock, int cmd, ...)
 
 #define fcntl zsock_fcntl_wrapper
 
+static inline int ioctl(int sock, unsigned long request, ...)
+{
+	int ret;
+	va_list args;
+
+	va_start(args, request);
+	ret = zsock_ioctl(sock, request, args);
+	va_end(args);
+
+	return ret;
+}
+
 /** POSIX wrapper for @ref zsock_sendto */
 static inline ssize_t sendto(int sock, const void *buf, size_t len, int flags,
 			     const struct sockaddr *dest_addr,
@@ -919,7 +996,11 @@ static inline char *inet_ntop(sa_family_t family, const void *src, char *dst,
 #define EAI_FAMILY DNS_EAI_FAMILY
 #endif /* defined(CONFIG_NET_SOCKETS_POSIX_NAMES) */
 
+#if defined(CONFIG_NET_INTERFACE_NAME)
+#define IFNAMSIZ CONFIG_NET_INTERFACE_NAME_LEN
+#else
 #define IFNAMSIZ Z_DEVICE_MAX_NAME_LEN
+#endif
 
 /** Interface description structure */
 struct ifreq {
@@ -933,7 +1014,7 @@ struct ifreq {
 
 /** sockopt: Recording debugging information (ignored, for compatibility) */
 #define SO_DEBUG 1
-/** sockopt: address reuse (ignored, for compatibility) */
+/** sockopt: address reuse */
 #define SO_REUSEADDR 2
 /** sockopt: Type of the socket */
 #define SO_TYPE 3
@@ -944,7 +1025,7 @@ struct ifreq {
 /** sockopt: Transmission of broadcast messages is supported (ignored, for compatibility) */
 #define SO_BROADCAST 6
 
-/** sockopt: Size of socket socket send buffer (ignored, for compatibility) */
+/** sockopt: Size of socket send buffer */
 #define SO_SNDBUF 7
 /** sockopt: Size of socket recv buffer */
 #define SO_RCVBUF 8
@@ -955,7 +1036,7 @@ struct ifreq {
 #define SO_OOBINLINE 10
 /** sockopt: Socket lingers on close (ignored, for compatibility) */
 #define SO_LINGER 13
-/** sockopt: Allow multiple sockets to reuse a single port (ignored, for compatibility) */
+/** sockopt: Allow multiple sockets to reuse a single port */
 #define SO_REUSEPORT 15
 
 /** sockopt: Receive low watermark (ignored, for compatibility) */
@@ -1025,12 +1106,27 @@ struct net_socket_register {
 	bool is_offloaded;
 	bool (*is_supported)(int family, int type, int proto);
 	int (*handler)(int family, int type, int proto);
+#if defined(CONFIG_NET_SOCKETS_OBJ_CORE)
+	/* Store also the name of the socket type in order to be able to
+	 * print it later.
+	 */
+	const char * const name;
+#endif
 };
 
 #define NET_SOCKET_DEFAULT_PRIO CONFIG_NET_SOCKETS_PRIORITY_DEFAULT
 
 #define NET_SOCKET_GET_NAME(socket_name, prio)	\
 	__net_socket_register_##prio##_##socket_name
+
+#if defined(CONFIG_NET_SOCKETS_OBJ_CORE)
+#define K_OBJ_TYPE_SOCK  K_OBJ_TYPE_ID_GEN("SOCK")
+
+#define NET_SOCKET_REGISTER_NAME(_name)		\
+	.name = STRINGIFY(_name),
+#else
+#define NET_SOCKET_REGISTER_NAME(_name)
+#endif
 
 #define _NET_SOCKET_REGISTER(socket_name, prio, _family, _is_supported, _handler, _is_offloaded) \
 	static const STRUCT_SECTION_ITERABLE(net_socket_register,	\
@@ -1039,6 +1135,7 @@ struct net_socket_register {
 		.is_offloaded = _is_offloaded,				\
 		.is_supported = _is_supported,				\
 		.handler = _handler,					\
+		NET_SOCKET_REGISTER_NAME(socket_name)			\
 	}
 
 #define NET_SOCKET_REGISTER(socket_name, prio, _family, _is_supported, _handler) \

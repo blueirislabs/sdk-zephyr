@@ -7,8 +7,7 @@
 #include <stddef.h>
 #include <zephyr/kernel.h>
 #include <soc.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/hci_types.h>
 #include <zephyr/sys/byteorder.h>
 
 #include "hal/cpu.h"
@@ -274,6 +273,9 @@ int ll_tx_mem_enqueue(uint16_t handle, void *tx)
 
 	pdu = (void *)((struct node_tx *)tx)->pdu;
 	tx_len += pdu->len;
+	if (delta == 0) { /* Let's avoid a division by 0 if we happen to have a really fast HCI IF*/
+		delta = 1;
+	}
 	tx_rate = ((uint64_t)tx_len << 3) * BT_CTLR_THROUGHPUT_PERIOD / delta;
 	tx_cnt++;
 #endif /* CONFIG_BT_CTLR_THROUGHPUT */
@@ -417,8 +419,52 @@ uint8_t ll_terminate_ind_send(uint16_t handle, uint8_t reason)
 #if defined(CONFIG_BT_CTLR_PERIPHERAL_ISO) || defined(CONFIG_BT_CTLR_CENTRAL_ISO)
 	if (IS_CIS_HANDLE(handle)) {
 		cis = ll_iso_stream_connected_get(handle);
-		/* Disallow if CIS is not connected */
 		if (!cis) {
+#if defined(CONFIG_BT_CTLR_CENTRAL_ISO)
+			/* CIS is not connected - get the unconnected instance */
+			cis = ll_conn_iso_stream_get(handle);
+
+			/* Sanity-check instance to make sure it's created but not connected */
+			if (cis->group && cis->lll.handle == handle && !cis->established) {
+				if (cis->group->state == CIG_STATE_CONFIGURABLE) {
+					/* Disallow if CIG is still in configurable state */
+					return BT_HCI_ERR_CMD_DISALLOWED;
+
+				} else if (cis->group->state == CIG_STATE_INITIATING) {
+					conn = ll_connected_get(cis->lll.acl_handle);
+
+					/* CIS is not yet established - try to cancel procedure */
+					if (ull_cp_cc_cancel(conn)) {
+						/* Successfully canceled - complete disconnect */
+						struct node_rx_pdu *node_terminate;
+
+						node_terminate = ull_pdu_rx_alloc();
+						LL_ASSERT(node_terminate);
+
+						node_terminate->hdr.handle = handle;
+						node_terminate->hdr.type = NODE_RX_TYPE_TERMINATE;
+						*((uint8_t *)node_terminate->pdu) =
+							BT_HCI_ERR_LOCALHOST_TERM_CONN;
+
+						ll_rx_put_sched(node_terminate->hdr.link,
+							node_terminate);
+
+						/* We're no longer initiating a connection */
+						cis->group->state = CIG_STATE_CONFIGURABLE;
+
+						/* This is now a successful disconnection */
+						return BT_HCI_ERR_SUCCESS;
+					}
+
+					/* Procedure could not be canceled in the current
+					 * state - let it run its course and enqueue a
+					 * terminate procedure.
+					 */
+					return ull_cp_cis_terminate(conn, cis, reason);
+				}
+			}
+#endif /* CONFIG_BT_CTLR_CENTRAL_ISO */
+			/* Disallow if CIS is not connected */
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
@@ -447,7 +493,7 @@ uint8_t ll_feature_req_send(uint16_t handle)
 
 	uint8_t err;
 
-	err = ull_cp_feature_exchange(conn);
+	err = ull_cp_feature_exchange(conn, 1U);
 	if (err) {
 		return err;
 	}
@@ -804,7 +850,7 @@ void ull_conn_setup(memq_link_t *rx_link, struct node_rx_hdr *rx)
 	}
 }
 
-int ull_conn_rx(memq_link_t *link, struct node_rx_pdu **rx)
+void ull_conn_rx(memq_link_t *link, struct node_rx_pdu **rx)
 {
 	struct pdu_data *pdu_rx;
 	struct ll_conn *conn;
@@ -814,7 +860,7 @@ int ull_conn_rx(memq_link_t *link, struct node_rx_pdu **rx)
 		/* Mark for buffer for release */
 		(*rx)->hdr.type = NODE_RX_TYPE_RELEASE;
 
-		return 0;
+		return;
 	}
 
 	ull_cp_tx_ntf(conn);
@@ -824,14 +870,12 @@ int ull_conn_rx(memq_link_t *link, struct node_rx_pdu **rx)
 	switch (pdu_rx->ll_id) {
 	case PDU_DATA_LLID_CTRL:
 	{
-		ARG_UNUSED(link);
-		ARG_UNUSED(pdu_rx);
-
-		ull_cp_rx(conn, *rx);
-
 		/* Mark buffer for release */
 		(*rx)->hdr.type = NODE_RX_TYPE_RELEASE;
-		return 0;
+
+		ull_cp_rx(conn, link, *rx);
+
+		return;
 	}
 
 	case PDU_DATA_LLID_DATA_CONTINUE:
@@ -863,16 +907,15 @@ int ull_conn_rx(memq_link_t *link, struct node_rx_pdu **rx)
 
 		break;
 	}
-
-
-	return 0;
 }
 
-int ull_conn_llcp(struct ll_conn *conn, uint32_t ticks_at_expire, uint16_t lazy)
+int ull_conn_llcp(struct ll_conn *conn, uint32_t ticks_at_expire,
+		  uint32_t remainder, uint16_t lazy)
 {
 	LL_ASSERT(conn->lll.handle != LLL_HANDLE_INVALID);
 
 	conn->llcp.prep.ticks_at_expire = ticks_at_expire;
+	conn->llcp.prep.remainder = remainder;
 	conn->llcp.prep.lazy = lazy;
 
 	ull_cp_run(conn);
@@ -1004,12 +1047,6 @@ void ull_conn_done(struct node_rx_event_done *done)
 				lll->latency_event = lll->latency;
 			}
 #endif /* CONFIG_BT_PERIPHERAL */
-
-#if defined(CONFIG_BT_CENTRAL)
-		} else if (reason_final) {
-			conn->central.terminate_ack = 1;
-#endif /* CONFIG_BT_CENTRAL */
-
 		}
 
 		/* Reset connection failed to establish countdown */
@@ -1193,7 +1230,7 @@ void ull_conn_done(struct node_rx_event_done *done)
 #if defined(CONFIG_BT_CTLR_SLOT_RESERVATION_UPDATE)
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH) || defined(CONFIG_BT_CTLR_PHY)
 	if (lll->evt_len_upd) {
-		uint32_t ready_delay, rx_time, tx_time, ticks_slot;
+		uint32_t ready_delay, rx_time, tx_time, ticks_slot, slot_us;
 
 		lll->evt_len_upd = 0;
 #if defined(CONFIG_BT_CTLR_PHY)
@@ -1217,12 +1254,18 @@ void ull_conn_done(struct node_rx_event_done *done)
 		tx_time = PDU_DC_MAX_US(lll->dle.eff.max_tx_octets, 0);
 		rx_time = PDU_DC_MAX_US(lll->dle.eff.max_rx_octets, 0);
 #endif /* CONFIG_BT_CTLR_PHY */
-		ticks_slot = HAL_TICKER_US_TO_TICKS(EVENT_OVERHEAD_START_US +
-						    ready_delay +
-						    EVENT_IFS_US +
-						    rx_time +
-						    tx_time +
-						    4);
+
+		/* Calculate event time reservation */
+		slot_us = tx_time + rx_time;
+		slot_us += EVENT_IFS_US + (EVENT_CLOCK_JITTER_US << 1);
+		slot_us += ready_delay;
+
+		if (IS_ENABLED(CONFIG_BT_CTLR_EVENT_OVERHEAD_RESERVE_MAX) ||
+		    !conn->lll.role) {
+			slot_us += EVENT_OVERHEAD_START_US + EVENT_OVERHEAD_END_US;
+		}
+
+		ticks_slot = HAL_TICKER_US_TO_TICKS_CEIL(slot_us);
 		if (ticks_slot > conn->ull.ticks_slot) {
 			ticks_slot_plus = ticks_slot - conn->ull.ticks_slot;
 		} else {
@@ -1241,7 +1284,7 @@ void ull_conn_done(struct node_rx_event_done *done)
 	    ticks_slot_plus || ticks_slot_minus ||
 	    lazy || force) {
 		uint8_t ticker_id = TICKER_ID_CONN_BASE + lll->handle;
-		struct ll_conn *conn = lll->hdr.parent;
+		struct ll_conn *conn_ll = lll->hdr.parent;
 		uint32_t ticker_status;
 
 		/* Call to ticker_update can fail under the race
@@ -1257,10 +1300,10 @@ void ull_conn_done(struct node_rx_event_done *done)
 					      ticks_slot_plus, ticks_slot_minus,
 					      lazy, force,
 					      ticker_update_conn_op_cb,
-					      conn);
+					      conn_ll);
 		LL_ASSERT((ticker_status == TICKER_STATUS_SUCCESS) ||
 			  (ticker_status == TICKER_STATUS_BUSY) ||
-			  ((void *)conn == ull_disable_mark_get()));
+			  ((void *)conn_ll == ull_disable_mark_get()));
 	}
 }
 
@@ -1727,6 +1770,7 @@ static void conn_cleanup_finalize(struct ll_conn *conn)
 #if defined(LLCP_TX_CTRL_BUF_QUEUE_ENABLE)
 	ull_cp_update_tx_buffer_queue(conn);
 #endif /* LLCP_TX_CTRL_BUF_QUEUE_ENABLE */
+	ull_cp_release_nodes(conn);
 
 	/* flush demux-ed Tx buffer still in ULL context */
 	tx_ull_flush(conn);
@@ -1936,10 +1980,6 @@ static int empty_data_start_release(struct ll_conn *conn, struct node_tx *tx)
 }
 #endif /* CONFIG_BT_CTLR_LLID_DATA_START_EMPTY */
 
-/*
- * TODO: struct lll_conn *lll_conn gives a CI error that tag names
- * must be unique. This may be a false positive
- */
 #if defined(CONFIG_BT_CTLR_FORCE_MD_AUTO)
 static uint8_t force_md_cnt_calc(struct lll_conn *lll_connection, uint32_t tx_rate)
 {

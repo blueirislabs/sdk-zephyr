@@ -11,9 +11,7 @@
 #include <fsl_enc.h>
 #include <fsl_xbara.h>
 
-#ifdef CONFIG_PINCTRL
 #include <zephyr/drivers/pinctrl.h>
-#endif /* CONFIG_PINCTRL */
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/sensor/qdec_mcux.h>
 #include <zephyr/drivers/spi.h>
@@ -23,9 +21,7 @@ LOG_MODULE_REGISTER(qdec_mcux, CONFIG_SENSOR_LOG_LEVEL);
 
 struct qdec_mcux_config {
 	ENC_Type *base;
-#ifdef CONFIG_PINCTRL
 	const struct pinctrl_dev_config *pincfg;
-#endif /* CONFIG_PINCTRL */
 	XBARA_Type *xbar;
 	size_t xbar_maps_len;
 	int xbar_maps[];
@@ -46,6 +42,7 @@ static enc_decoder_work_mode_t int_to_work_mode(int32_t val)
 static int qdec_mcux_attr_set(const struct device *dev, enum sensor_channel ch,
 	enum sensor_attribute attr, const struct sensor_value *val)
 {
+	const struct qdec_mcux_config *config = dev->config;
 	struct qdec_mcux_data *data = dev->data;
 
 	if (ch != SENSOR_CHAN_ROTATION) {
@@ -63,6 +60,8 @@ static int qdec_mcux_attr_set(const struct device *dev, enum sensor_channel ch,
 	case SENSOR_ATTR_QDEC_ENABLE_SINGLE_PHASE:
 		data->qdec_config.decoderWorkMode =
 			int_to_work_mode(val->val1);
+
+		WRITE_BIT(config->base->CTRL, ENC_CTRL_PH1_SHIFT, val->val1);
 		return 0;
 	default:
 		return -ENOTSUP;
@@ -115,9 +114,8 @@ static int qdec_mcux_ch_get(const struct device *dev, enum sensor_channel ch,
 
 	switch (ch) {
 	case SENSOR_CHAN_ROTATION:
-		val->val1 = ((int64_t)data->position * 360) /
-			    data->counts_per_revolution;
-		val->val2 = 0;
+		sensor_value_from_float(val, (data->position * 360.0f)
+					/ data->counts_per_revolution);
 		break;
 	default:
 		return -ENOTSUP;
@@ -138,10 +136,8 @@ static void init_inputs(const struct device *dev)
 	int i;
 	const struct qdec_mcux_config *config = dev->config;
 
-#ifdef CONFIG_PINCTRL
 	i = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 	assert(i == 0);
-#endif
 
 	/* Quadrature Encoder inputs are only accessible via crossbar */
 	XBARA_Init(config->xbar);
@@ -150,14 +146,6 @@ static void init_inputs(const struct device *dev)
 					   config->xbar_maps[i + 1]);
 	}
 }
-
-#ifdef CONFIG_PINCTRL
-#define QDEC_MCUX_PINCTRL_DEFINE(n) PINCTRL_DT_INST_DEFINE(n);
-#define QDEC_MCUX_PINCTRL_INIT(n) .pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),
-#else
-#define QDEC_MCUX_PINCTRL_DEFINE(n)
-#define QDEC_MCUX_PINCTRL_INIT(n)
-#endif
 
 #define XBAR_PHANDLE(n)	DT_INST_PHANDLE(n, xbar)
 
@@ -180,14 +168,14 @@ static void init_inputs(const struct device *dev)
 		.counts_per_revolution = DT_INST_PROP(n, counts_per_revolution) \
 	};									\
 										\
-	QDEC_MCUX_PINCTRL_DEFINE(n)						\
+	PINCTRL_DT_INST_DEFINE(n);						\
 										\
 	static const struct qdec_mcux_config qdec_mcux_##n##_config = {		\
 		.base = (ENC_Type *)DT_INST_REG_ADDR(n),			\
 		.xbar = (XBARA_Type *)DT_REG_ADDR(XBAR_PHANDLE(n)),		\
 		.xbar_maps_len = DT_PROP_LEN(XBAR_PHANDLE(n), xbar_maps),	\
 		.xbar_maps = DT_PROP(XBAR_PHANDLE(n), xbar_maps),		\
-		QDEC_MCUX_PINCTRL_INIT(n)					\
+		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),			\
 	};									\
 										\
 	static int qdec_mcux_##n##_init(const struct device *dev)		\

@@ -51,7 +51,7 @@ config HEAP_LISTENER
 choice
 	prompt "Supported heap sizes"
 	depends on !64BIT
-	default SYS_HEAP_SMALL_ONLY if (SRAM_SIZE <= 256)
+	default SYS_HEAP_SMALL_ONLY if (SRAM_SIZE <= 256) && !PARTITION_MANAGER_ENABLED
 	default SYS_HEAP_AUTO
 	help
 	  Heaps using reduced-size chunk headers can accommodate so called
@@ -132,5 +132,22 @@ config SYS_MEM_BLOCKS_RUNTIME_STATS
 	  This option enables the tracking and reporting of the memory
 	  blocks statistics related to the current and maximum number
 	  of allocations in a given memory block.
+
+config OBJ_CORE_SYS_MEM_BLOCKS
+	bool "Kernel object for memory blocks"
+	depends on SYS_MEM_BLOCKS && OBJ_CORE
+	default y if SYS_MEM_BLOCKS && OBJ_CORE
+	help
+	  This option allows object cores to be integrated into memory block
+	  objects.
+
+config OBJ_CORE_STATS_SYS_MEM_BLOCKS
+	bool "Object core statistics for memory blocks"
+	depends on SYS_MEM_BLOCKS && OBJ_CORE_STATS
+	default y if SYS_MEM_BLOCKS && OBJ_CORE_STATS
+	select SYS_MEM_BLOCKS_RUNTIME_STATS
+	help
+	  This option integrates the object core statistics framework into
+	  the memory blocks.
 
 endmenu

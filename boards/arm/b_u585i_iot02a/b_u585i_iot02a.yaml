@@ -21,3 +21,6 @@ supported:
   - nvs
   - backup_sram
   - pwm
+  - counter
+  - i2c
+vendor: st

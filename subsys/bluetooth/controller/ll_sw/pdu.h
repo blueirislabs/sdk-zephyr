@@ -225,6 +225,19 @@
 					     (((aux_ptr)->offs_phy_packed[1] & 0x1F) << 8))
 #define PDU_ADV_AUX_PTR_PHY_GET(aux_ptr) (((aux_ptr)->offs_phy_packed[1] >> 5) & 0x07)
 
+/* Macros for getting/setting offset/offset_units/offset_adjust from pdu_adv_sync_info */
+#define PDU_ADV_SYNC_INFO_OFFSET_GET(si) ((si)->offs_packed[0] | \
+					 (((si)->offs_packed[1] & 0x1F) << 8))
+#define PDU_ADV_SYNC_INFO_OFFS_UNITS_GET(si) (((si)->offs_packed[1] >> 5) & 0x01)
+#define PDU_ADV_SYNC_INFO_OFFS_ADJUST_GET(si) (((si)->offs_packed[1] >> 6) & 0x01)
+#define PDU_ADV_SYNC_INFO_OFFS_SET(si, offs, offs_units, offs_adjust) \
+	do { \
+		(si)->offs_packed[0] = (offs) & 0xFF; \
+		(si)->offs_packed[1] = (((offs) >> 8) & 0x1F) + \
+				       (((offs_units) << 5) & 0x20) + \
+				       (((offs_adjust) << 6) & 0x40); \
+	} while (0)
+
 /* Advertiser's Sleep Clock Accuracy Value */
 #define SCA_500_PPM       500 /* 51 ppm to 500 ppm */
 #define SCA_50_PPM        50  /* 0 ppm to 50 ppm */
@@ -251,6 +264,9 @@
 #define PDU_ADV_DATA_HEADER_TYPE_OFFSET 1U
 #define PDU_ADV_DATA_HEADER_DATA_OFFSET 2U
 
+/* Advertising Data Types in ACAD */
+#define PDU_ADV_DATA_TYPE_CHANNEL_MAP_UPDATE_IND 0x28
+
 /*
  * Macros to return correct Data Channel PDU time
  * Note: formula is valid for 1M, 2M and Coded S8
@@ -264,6 +280,18 @@
 #define PHY_CODED    BIT(2)
 #define PHY_FLAGS_S2 0
 #define PHY_FLAGS_S8 BIT(0)
+
+/* Macros for getting/setting did/sid from pdu_adv_adi */
+#define PDU_ADV_ADI_DID_GET(adi) ((adi)->did_sid_packed[0] | \
+					     (((adi)->did_sid_packed[1] & 0x0F) << 8))
+#define PDU_ADV_ADI_SID_GET(adi) (((adi)->did_sid_packed[1] >> 4) & 0x0F)
+#define PDU_ADV_ADI_SID_SET(adi, sid) (adi)->did_sid_packed[1] = (((sid) << 4) + \
+								 ((adi)->did_sid_packed[1] & 0x0F))
+#define PDU_ADV_ADI_DID_SID_SET(adi, did, sid) \
+	do { \
+		(adi)->did_sid_packed[0] = (did) & 0xFF; \
+		(adi)->did_sid_packed[1] = (((did) >> 8) & 0x0F) + ((sid) << 4); \
+	} while (0)
 
 #if defined(CONFIG_BT_CTLR_PHY_CODED)
 #define CODED_PHY_PREAMBLE_TIME_US       80
@@ -339,6 +367,7 @@
 						    ((enc) ? \
 						     (PDU_MIC_SIZE) : 0), \
 						    (phy))
+#define PDU_CIS_OFFSET_MIN_US 500U
 
 struct pdu_adv_adv_ind {
 	uint8_t addr[BDADDR_SIZE];
@@ -429,13 +458,12 @@ enum pdu_adv_mode {
 #define PDU_ADV_SID_COUNT 16
 
 struct pdu_adv_adi {
-#ifdef CONFIG_LITTLE_ENDIAN
-	uint16_t did:12;
-	uint16_t sid:4;
-#else
-	uint16_t sid:4;
-	uint16_t did:12;
-#endif /* CONFIG_LITTLE_ENDIAN */
+	/* did:12
+	 * sid:4
+	 * NOTE: This layout as bitfields is not portable for BE using
+	 * endianness conversion macros.
+	 */
+	uint8_t did_sid_packed[2];
 } __packed;
 
 struct pdu_adv_aux_ptr {
@@ -473,20 +501,17 @@ enum pdu_adv_aux_phy {
 };
 
 struct pdu_adv_sync_info {
-#ifdef CONFIG_LITTLE_ENDIAN
-	uint16_t offs:13;
-	uint16_t offs_units:1;
-	uint16_t offs_adjust:1;
-	uint16_t rfu:1;
-#else
-	uint16_t rfu:1;
-	uint16_t offs_adjust:1;
-	uint16_t offs_units:1;
-	uint16_t offs:13;
-#endif /* CONFIG_LITTLE_ENDIAN */
+	/* offs:13
+	 * offs_units:1
+	 * offs_adjust:1
+	 * rfu:1
+	 * NOTE: This layout as bitfields is not portable for BE using
+	 * endianness conversion macros.
+	 */
+	uint8_t  offs_packed[2];
 	uint16_t interval;
 	uint8_t  sca_chm[PDU_CHANNEL_MAP_SIZE];
-	uint32_t aa;
+	uint8_t  aa[4];
 	uint8_t  crc_init[3];
 	uint16_t evt_cntr;
 } __packed;
@@ -1003,8 +1028,8 @@ struct pdu_iso_sdu_sh {
 	uint8_t len;
 
 	/* Note, timeoffset only available in first segment of sdu */
-	uint32_t payload:8;
 	uint32_t timeoffset:24;
+	uint32_t payload:8;
 #endif /* CONFIG_LITTLE_ENDIAN */
 } __packed;
 

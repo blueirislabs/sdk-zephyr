@@ -4,6 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * @file
+ * @brief Public SMBus Driver APIs
+ */
+
 #ifndef ZEPHYR_INCLUDE_DRIVERS_SMBUS_H_
 #define ZEPHYR_INCLUDE_DRIVERS_SMBUS_H_
 
@@ -25,11 +30,11 @@ extern "C" {
  * @name SMBus Protocol commands
  * @{
  *
- * SMBus Specification defines following SMBus protocols operations
+ * SMBus Specification defines the following SMBus protocols operations
  */
 
 /**
- * SMBus Quick protocol is very simple command with no data sent or
+ * SMBus Quick protocol is a very simple command with no data sent or
  * received. Peripheral may denote only R/W bit, which can still be
  * used for the peripheral management, for example to switch peripheral
  * On/Off. Quick protocol can also be used for peripheral devices
@@ -69,7 +74,7 @@ extern "C" {
 #define SMBUS_CMD_BYTE			0b001
 
 /**
- * SMBus Byte Data protocol send first byte (command) followed
+ * SMBus Byte Data protocol sends the first byte (command) followed
  * by read or write one byte.
  *
  * @code
@@ -95,7 +100,7 @@ extern "C" {
 #define SMBUS_CMD_BYTE_DATA		0b010
 
 /**
- * SMBus Word Data protocol send first byte (command) followed
+ * SMBus Word Data protocol sends the first byte (command) followed
  * by read or write two bytes.
  *
  * @code
@@ -123,9 +128,9 @@ extern "C" {
 #define SMBUS_CMD_WORD_DATA		0b011
 
 /**
- * SMBus Process Call protocol is basically Write Word followed by
- * Wead Word. It is named so because command sends data and waits
- * for the perihperal to return reply.
+ * SMBus Process Call protocol is Write Word followed by
+ * Read Word. It is named so because the command sends data and waits
+ * for the peripheral to return a reply.
  *
  * @code
  * 0                   1                   2
@@ -142,8 +147,8 @@ extern "C" {
 #define SMBUS_CMD_PROC_CALL		0b100
 
 /**
- * SMBus Block protocol reads or writes block of data up to 32 bytes.
- * Count byte specifies the amount of data.
+ * SMBus Block protocol reads or writes a block of data up to 32 bytes.
+ * The Count byte specifies the amount of data.
  *
  * @code
  *
@@ -173,8 +178,8 @@ extern "C" {
 #define SMBUS_CMD_BLOCK			0b101
 
 /**
- * SMBus Block Write - Block Read Process Call protocol is basically
- * Block Write followed by Block Read
+ * SMBus Block Write - Block Read Process Call protocol is
+ * Block Write followed by Block Read.
  *
  * @code
  * 0                   1                   2
@@ -200,7 +205,7 @@ extern "C" {
  * @name SMBus device functionality
  * @{
  *
- * Following parameters describes functionality of SMBus device
+ * The following parameters describe the functionality of the SMBus device
  */
 
 /** Peripheral to act as Controller. */
@@ -221,7 +226,7 @@ extern "C" {
  * @name SMBus special reserved addresses
  * @{
  *
- * Following addresses are reserved by SMBus specification
+ * The following addresses are reserved by SMBus specification
  */
 
 /**
@@ -241,9 +246,9 @@ extern "C" {
 
 /** @brief SMBus read / write direction */
 enum smbus_direction {
-	/** Write message to SMBus */
+	/** Write a message to SMBus peripheral */
 	SMBUS_MSG_WRITE = 0,
-	/** Read message from SMBus */
+	/** Read a message from SMBus peripheral */
 	SMBUS_MSG_READ = 1,
 };
 
@@ -271,7 +276,7 @@ typedef void (*smbus_callback_handler_t)(const struct device *dev,
  *
  * Used to register a callback in the driver instance callback list.
  * As many callbacks as needed can be added as long as each of them
- * are unique pointers of struct smbus_callback.
+ * is a unique pointer of struct smbus_callback.
  *
  * Note: Such struct should not be allocated on stack.
  */
@@ -288,12 +293,11 @@ struct smbus_callback {
 
 /**
  * @brief Complete SMBus DT information
- *
- * @param bus SMBus bus
- * @param addr Address of the SMBus peripheral device.
  */
 struct smbus_dt_spec {
+	/** SMBus bus */
 	const struct device *bus;
+	/** Address of the SMBus peripheral device */
 	uint16_t addr;
 };
 
@@ -607,11 +611,8 @@ static inline int z_impl_smbus_get_config(const struct device *dev,
  * @retval -ENOSYS If function smbus_smbalert_set_cb() is not implemented
  * by the driver.
  */
-__syscall int smbus_smbalert_set_cb(const struct device *dev,
-				    struct smbus_callback *cb);
-
-static inline int z_impl_smbus_smbalert_set_cb(const struct device *dev,
-					       struct smbus_callback *cb)
+static inline int smbus_smbalert_set_cb(const struct device *dev,
+					struct smbus_callback *cb)
 {
 	const struct smbus_driver_api *api =
 		(const struct smbus_driver_api *)dev->api;
@@ -661,11 +662,8 @@ static inline int z_impl_smbus_smbalert_remove_cb(const struct device *dev,
  * @retval -ENOSYS If function smbus_host_notify_set_cb() is not implemented
  * by the driver.
  */
-__syscall int smbus_host_notify_set_cb(const struct device *dev,
-				       struct smbus_callback *cb);
-
-static inline int z_impl_smbus_host_notify_set_cb(const struct device *dev,
-						  struct smbus_callback *cb)
+static inline int smbus_host_notify_set_cb(const struct device *dev,
+					   struct smbus_callback *cb)
 {
 	const struct smbus_driver_api *api =
 		(const struct smbus_driver_api *)dev->api;

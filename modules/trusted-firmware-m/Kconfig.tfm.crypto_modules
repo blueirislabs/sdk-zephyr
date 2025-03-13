@@ -10,6 +10,7 @@ if TFM_PARTITION_CRYPTO
 config TFM_CRYPTO_RNG_MODULE_ENABLED
 	bool "Random number generator crypto module"
 	default y
+	depends on PSA_WANT_GENERATE_RANDOM && NRF_SECURITY
 	help
 	  Enables the random number generator  module within the crypto partition.
 	  Unset this option if 'psa_generate_random' is not used.
@@ -20,7 +21,7 @@ config TFM_CRYPTO_KEY_MODULE_ENABLED
 	depends on PSA_HAS_KEY_SUPPORT && NRF_SECURITY
 	help
 	  Enables the KEY crypto module within the crypto partition.
-	  Unset this option if the functionality provided by 'crypto_key.c'
+	  Unset this option if the functionality provided by 'crypto_key_management.c'
 	  is not used.
 
 config TFM_CRYPTO_AEAD_MODULE_ENABLED
@@ -80,11 +81,12 @@ config TFM_CRYPTO_ASYM_SIGN_MODULE_ENABLED
 config TFM_CRYPTO_KEY_DERIVATION_MODULE_ENABLED
 	bool "KEY DERIVATION crypto module"
 	default y
-	depends on PSA_HAS_KEY_DERIVATION && NRF_SECURITY
+	depends on (PSA_HAS_KEY_DERIVATION || PSA_HAS_KEY_AGREEMENT) && NRF_SECURITY
 	help
 	  Enables the KEY_DERIVATION crypto module within the crypto partition.
 	  Unset this option if the functionality provided by 'crypto_key_derivation.c'
 	  is not used.
+	  Note that key agreement is under key derivation in the current implementation.
 
 endif # TFM_PARTITION_CRYPTO
 

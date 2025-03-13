@@ -11,6 +11,8 @@ import os
 import sys
 import pytest
 
+from unittest import mock
+
 ZEPHYR_BASE = os.getenv("ZEPHYR_BASE")
 sys.path.insert(0, os.path.join(ZEPHYR_BASE, "scripts/pylib/twister"))
 from twisterlib.testinstance import TestInstance
@@ -29,7 +31,7 @@ TESTDATA_1 = [
     (False, True, "sensor", "native", "", True, [], (True, False)),
 ]
 @pytest.mark.parametrize("build_only, slow, harness, platform_type, platform_sim, device_testing,fixture, expected", TESTDATA_1)
-def test_check_build_or_run(class_testplan, monkeypatch, all_testsuites_dict, platforms_list, build_only, slow, harness, platform_type, platform_sim, device_testing, fixture, expected):
+def test_check_build_or_run(class_testplan, all_testsuites_dict, platforms_list, build_only, slow, harness, platform_type, platform_sim, device_testing, fixture, expected):
     """" Test to check the conditions for build_only and run scenarios
     Scenario 1: Test when different parameters are passed, build_only and run are set correctly
     Scenario 2: Test if build_only is enabled when the OS is Windows"""
@@ -51,27 +53,35 @@ def test_check_build_or_run(class_testplan, monkeypatch, all_testsuites_dict, pl
     _, r = expected
     assert run == r
 
-    monkeypatch.setattr("os.name", "nt")
-    run = testinstance.check_runnable()
-    assert not run
+    with mock.patch('os.name', 'nt'):
+        run = testinstance.check_runnable()
+        assert not run
 
 TESTDATA_2 = [
-    (True, True, True, ["demo_board_2"], "native", '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y\nCONFIG_ASAN=y\nCONFIG_UBSAN=y'),
-    (True, False, True, ["demo_board_2"], "native", '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y\nCONFIG_ASAN=y'),
-    (False, False, True, ["demo_board_2"], 'native', '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y'),
-    (True, False, True, ["demo_board_2"], 'mcu', '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y'),
-    (False, False, False, ["demo_board_2"], 'native', ''),
-    (False, False, True, ['demo_board_1'], 'native', ''),
-    (True, False, False, ["demo_board_2"], 'native', '\nCONFIG_ASAN=y'),
-    (False, True, False, ["demo_board_2"], 'native', '\nCONFIG_UBSAN=y'),
+    (True, True, True, ["demo_board_2"], "native", None, '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y\nCONFIG_ASAN=y\nCONFIG_UBSAN=y'),
+    (True, False, True, ["demo_board_2"], "native", None, '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y\nCONFIG_ASAN=y'),
+    (False, False, True, ["demo_board_2"], 'native', None, '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y'),
+    (True, False, True, ["demo_board_2"], 'mcu', None, '\nCONFIG_COVERAGE=y\nCONFIG_COVERAGE_DUMP=y'),
+    (False, False, False, ["demo_board_2"], 'native', None, ''),
+    (False, False, True, ['demo_board_1'], 'native', None, ''),
+    (True, False, False, ["demo_board_2"], 'native', None, '\nCONFIG_ASAN=y'),
+    (False, True, False, ["demo_board_2"], 'native', None, '\nCONFIG_UBSAN=y'),
+    (False, False, False, ["demo_board_2"], 'native', ["CONFIG_LOG=y"], 'CONFIG_LOG=y'),
+    (False, False, False, ["demo_board_2"], 'native', ["arch:x86_demo:CONFIG_LOG=y"], 'CONFIG_LOG=y'),
+    (False, False, False, ["demo_board_2"], 'native', ["arch:arm_demo:CONFIG_LOG=y"], ''),
+    (False, False, False, ["demo_board_2"], 'native', ["platform:demo_board_2:CONFIG_LOG=y"], 'CONFIG_LOG=y'),
+    (False, False, False, ["demo_board_2"], 'native', ["platform:demo_board_1:CONFIG_LOG=y"], ''),
 ]
 
-@pytest.mark.parametrize("enable_asan, enable_ubsan, enable_coverage, coverage_platform, platform_type, expected_content", TESTDATA_2)
-def test_create_overlay(class_testplan, all_testsuites_dict, platforms_list, enable_asan, enable_ubsan, enable_coverage, coverage_platform, platform_type, expected_content):
-    """Test correct content is written to testcase_extra.conf based on if conditions
-    TO DO: Add extra_configs to the input list"""
+@pytest.mark.parametrize("enable_asan, enable_ubsan, enable_coverage, coverage_platform, platform_type, extra_configs, expected_content", TESTDATA_2)
+def test_create_overlay(class_testplan, all_testsuites_dict, platforms_list, enable_asan, enable_ubsan, enable_coverage, coverage_platform, platform_type, extra_configs, expected_content):
+    """Test correct content is written to testcase_extra.conf based on if conditions."""
     class_testplan.testsuites = all_testsuites_dict
     testcase = class_testplan.testsuites.get('scripts/tests/twister/test_data/testsuites/samples/test_app/sample_test.app')
+
+    if extra_configs:
+        testcase.extra_configs = extra_configs
+
     class_testplan.platforms = platforms_list
     platform = class_testplan.get_platform("demo_board_2")
 

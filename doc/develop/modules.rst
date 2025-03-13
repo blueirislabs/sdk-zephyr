@@ -38,6 +38,32 @@ references to optional :ref:`binary blobs <bin-blobs>`.
 This page summarizes a list of policies and best practices which aim at
 better organizing the workflow in Zephyr modules.
 
+.. _modules-vs-projects:
+
+Modules vs west projects
+************************
+
+Zephyr modules, described in this page, are not the same as :ref:`west projects
+<west-workspace>`. In fact, modules :ref:`do not require west
+<modules_without_west>` at all. However, when using modules :ref:`with west
+<modules_using_west>`, then the build system uses west in order to find modules.
+
+In summary:
+
+Modules are repositories that contain a :file:`zephyr/module.yml` file, so that
+the Zephyr build system can pull in the source code from the repository.
+:ref:`West projects <west-manifests-projects>` are entries in the `projects:`
+section in the :file:`west.yml` manifest file.
+West projects are often also modules, but not always. There are west projects
+that are not included in the final firmware image (eg. tools) and thus do not
+need to be modules.
+Modules are found by the Zephyr build system either via :ref:`west itself
+<modules_using_west>`, or via the :ref:`ZEPHYR_MODULES CMake variable
+<modules_without_west>`.
+
+The contents of this page only apply to modules, and not to west projects in
+general (unless they are a module themselves).
+
 Module Repositories
 *******************
 
@@ -250,7 +276,7 @@ The merging of pull requests in the main branch of a module
 repository must be coupled with the corresponding manifest
 file update in the zephyr main tree.
 
-**Issue Reporting:** GitHub issues are intentionally disabled in module
+**Issue Reporting:** `GitHub issues`_ are intentionally disabled in module
 repositories, in
 favor of a centralized policy for issue reporting. Tickets concerning, for
 example, bugs or enhancements in modules shall be opened in the main
@@ -599,7 +625,7 @@ variables. For example:
 
   include(${ZEPHYR_CURRENT_MODULE_DIR}/cmake/code.cmake)
 
-It is possible to append values to a Zephyr CMake list variable from the module's first
+It is possible to append values to a Zephyr `CMake list`_ variable from the module's first
 CMakeLists.txt file.
 To do so, append the value to the list and then set the list in the PARENT_SCOPE
 of the CMakeLists.txt file. For example, to append ``bar`` to the ``FOO_LIST`` variable in the
@@ -645,7 +671,7 @@ example:
 
   include(${SYSBUILD_CURRENT_MODULE_DIR}/cmake/code.cmake)
 
-It is possible to append values to a Zephyr CMake list variable from the
+It is possible to append values to a Zephyr `CMake list`_ variable from the
 module's first CMakeLists.txt file.
 To do so, append the value to the list and then set the list in the
 PARENT_SCOPE of the CMakeLists.txt file. For example, to append ``bar`` to the
@@ -768,7 +794,7 @@ Create a ``MODULE_EXT_ROOT`` with the following structure
            └── Kconfig
 
 and then build your application by specifying ``-DMODULE_EXT_ROOT`` parameter to
-the CMake build system. The ``MODULE_EXT_ROOT`` accepts a CMake list of roots as
+the CMake build system. The ``MODULE_EXT_ROOT`` accepts a `CMake list`_ of roots as
 argument.
 
 A Zephyr module can automatically be added to the ``MODULE_EXT_ROOT``
@@ -792,7 +818,7 @@ to the path containing the CMake file.
 To include a module's Kconfig file, set the variable ``ZEPHYR_<MODULE_NAME>_KCONFIG``
 to the path to the Kconfig file.
 
-The following is an example on how to add support the the ``FOO`` module.
+The following is an example on how to add support the ``FOO`` module.
 
 Create the following structure
 
@@ -1125,5 +1151,4 @@ revision needs to be changed to the commit hash from the module repository.
 
 .. _CMake list: https://cmake.org/cmake/help/latest/manual/cmake-language.7.html#lists
 .. _add_subdirectory(): https://cmake.org/cmake/help/latest/command/add_subdirectory.html
-
 .. _GitHub issues: https://github.com/zephyrproject-rtos/zephyr/issues

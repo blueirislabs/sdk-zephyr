@@ -29,6 +29,18 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Experimental
      - 1.13
 
+   * - :ref:`auxdisplay_api`
+     - Experimental
+     - 3.4
+
+   * - :ref:`barriers_api`
+     - Experimental
+     - 3.4
+
+   * - :ref:`blinfo_api`
+     - Experimental
+     - 3.5
+
    * - :ref:`bluetooth_api`
      - Stable
      - 1.0
@@ -41,9 +53,21 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Unstable
      - 1.10
 
+   * - :ref:`conn_mgr_docs`
+     - Experimental
+     - 3.4.0
+
    * - :ref:`can_api`
      - Stable
      - 1.14
+
+   * - :ref:`can_transceiver_api`
+     - Experimental
+     - 3.1
+
+   * - :ref:`charger_api`
+     - Experimental
+     - 3.5
 
    * - :ref:`counter_api`
      - Unstable
@@ -54,7 +78,7 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - 1.7
 
    * - :ref:`dac_api`
-     - Experimental
+     - Unstable
      - 2.3
 
    * - :ref:`dai_api`
@@ -86,7 +110,7 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - 2.4
 
    * - :ref:`edac_api`
-     - Experimental
+     - Unstable
      - 2.5
 
    * - :ref:`eeprom_api`
@@ -117,9 +141,9 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Stable
      - 1.11
 
-   * - :ref:`gna_api`
+   * - :ref:`gnss_api`
      - Experimental
-     - 1.14
+     - 3.6
 
    * - :ref:`gpio_api`
      - Stable
@@ -149,6 +173,18 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Experimental
      - 3.2
 
+   * - :ref:`ieee802154_driver_api`
+     - Unstable
+     - 1.0
+
+   * - :ref:`ieee802154_l2_api`
+     - Unstable
+     - 1.0
+
+   * - :ref:`ieee802154_mgmt_api`
+     - Unstable
+     - 1.0
+
    * - :ref:`input`
      - Experimental
      - 3.4
@@ -173,6 +209,10 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Unstable
      - 1.9
 
+   * - :ref:`llext`
+     - Experimental
+     - 3.5
+
    * - :ref:`logging_api`
      - Stable
      - 1.13
@@ -188,6 +228,14 @@ between major releases are available in the :ref:`zephyr_release_notes`.
    * - :ref:`mbox_api`
      - Experimental
      - 1.0
+
+   * - :ref:`mcu_mgr`
+     - Stable
+     - 1.11
+
+   * - :ref:`modem`
+     - Experimental
+     - 3.5
 
    * - :ref:`mqtt_socket_interface`
      - Unstable
@@ -237,13 +285,17 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - Experimental
      - 2.4
 
+   * - :ref:`reset_api`
+     - Experimental
+     - 3.1
+
    * - :ref:`retained_mem_api`
      - Experimental
      - 3.4
 
-   * - :ref:`reset_api`
+   * - :ref:`retention_api`
      - Experimental
-     - 3.1
+     - 3.4
 
    * - :ref:`rtc_api`
      - Experimental
@@ -282,12 +334,16 @@ between major releases are available in the :ref:`zephyr_release_notes`.
      - 3.1
 
    * - :ref:`task_wdt_api`
-     - Experimental
+     - Unstable
      - 2.5
 
    * - :ref:`tcpc_api`
      - Experimental
      - 3.1
+
+   * - :ref:`tgpio_api`
+     - Experimental
+     - 3.5
 
    * - :ref:`uart_api`
      - Stable

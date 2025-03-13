@@ -101,7 +101,7 @@ static void stm32wb_start_ble(uint32_t rf_clock)
 	    CFG_BLE_MAX_ATT_MTU,
 	    CFG_BLE_SLAVE_SCA,
 	    CFG_BLE_MASTER_SCA,
-	    (rf_clock == STM32_SRC_LSE) ? CFG_BLE_LSE_SOURCE : 0,
+	    (rf_clock == STM32_SRC_LSE) ? CFG_BLE_LS_SOURCE : 0,
 	    CFG_BLE_MAX_CONN_EVENT_LENGTH,
 	    CFG_BLE_HSE_STARTUP_TIME,
 	    CFG_BLE_VITERBI_MODE,
@@ -147,7 +147,7 @@ static void tryfix_event(TL_Evt_t *tev)
 	struct bt_hci_evt_le_enh_conn_complete *evt =
 			(void *)((uint8_t *)mev + (sizeof(*mev)));
 
-	if (!bt_addr_cmp(&evt->peer_addr.a, BT_ADDR_NONE)) {
+	if (bt_addr_eq(&evt->peer_addr.a, BT_ADDR_NONE)) {
 		LOG_WRN("Invalid peer addr %s", bt_addr_le_str(&evt->peer_addr));
 		bt_addr_copy(&evt->peer_addr.a, &evt->peer_rpa);
 		evt->peer_addr.type = BT_ADDR_LE_RANDOM;
@@ -159,8 +159,12 @@ void TM_EvtReceivedCb(TL_EvtPacket_t *hcievt)
 	k_fifo_put(&ipm_rx_events_fifo, hcievt);
 }
 
-static void bt_ipm_rx_thread(void)
+static void bt_ipm_rx_thread(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	while (true) {
 		bool discardable = false;
 		k_timeout_t timeout = K_FOREVER;
@@ -554,7 +558,7 @@ static int bt_ipm_open(void)
 	/* Start RX thread */
 	k_thread_create(&ipm_rx_thread_data, ipm_rx_stack,
 			K_KERNEL_STACK_SIZEOF(ipm_rx_stack),
-			(k_thread_entry_t)bt_ipm_rx_thread, NULL, NULL, NULL,
+			bt_ipm_rx_thread, NULL, NULL, NULL,
 			K_PRIO_COOP(CONFIG_BT_DRIVER_RX_HIGH_PRIO),
 			0, K_NO_WAIT);
 

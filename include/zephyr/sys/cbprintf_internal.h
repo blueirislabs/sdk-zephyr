@@ -113,6 +113,31 @@ extern "C" {
 			0)
 #endif
 
+/** @brief Check if argument fits in 32 bit word.
+ *
+ * @param x Input argument.
+ *
+ * @retval 1 if variable is of type that fits in 32 bit word.
+ * @retval 0 if variable is of different type.
+ */
+#ifdef __cplusplus
+#define Z_CBPRINTF_IS_WORD_NUM(x) \
+	z_cbprintf_cxx_is_word_num(x)
+#else
+#define Z_CBPRINTF_IS_WORD_NUM(x) \
+	_Generic(x, \
+		char : 1, \
+		unsigned char : 1, \
+		short : 1, \
+		unsigned short : 1, \
+		int : 1, \
+		unsigned int : 1, \
+		long : sizeof(long) <= 4, \
+		unsigned long : sizeof(long) <= 4, \
+		default : \
+			0)
+#endif
+
 /* @brief Check if argument is a certain type of char pointer. What exectly is checked
  * depends on @p flags. If flags is 0 then 1 is returned if @p x is a char pointer.
  *
@@ -471,18 +496,18 @@ do { \
 	if (_pbuf != NULL) { \
 		/* Append string locations. */ \
 		uint8_t *_pbuf_loc = &_pbuf[_pkg_len]; \
-		for (size_t i = 0; i < _ros_cnt; i++) { \
-			*_pbuf_loc++ = _ros_pos_buf[i]; \
+		for (size_t _ros_idx = 0; _ros_idx < _ros_cnt; _ros_idx++) { \
+			*_pbuf_loc++ = _ros_pos_buf[_ros_idx]; \
 		} \
-		for (size_t i = 0; i < (2 * _rws_cnt); i++) { \
-			*_pbuf_loc++ = _rws_buffer[i]; \
+		for (size_t _rws_idx = 0; _rws_idx < (2 * _rws_cnt); _rws_idx++) { \
+			*_pbuf_loc++ = _rws_buffer[_rws_idx]; \
 		} \
 	} \
 	/* Store length */ \
 	_outlen = (_total_len > (int)_pmax) ? -ENOSPC : _total_len; \
 	/* Store length in the header, set number of dumped strings to 0 */ \
 	if (_pbuf != NULL) { \
-		union cbprintf_package_hdr hdr = { \
+		union cbprintf_package_hdr pkg_hdr = { \
 			.desc = { \
 				.len = (uint8_t)(_pkg_len / sizeof(int)), \
 				.str_cnt = 0, \
@@ -491,8 +516,8 @@ do { \
 			} \
 		}; \
 		IF_ENABLED(CONFIG_CBPRINTF_PACKAGE_HEADER_STORE_CREATION_FLAGS, \
-			   (hdr.desc.pkg_flags = flags)); \
-		*_len_loc = hdr; \
+			   (pkg_hdr.desc.pkg_flags = flags)); \
+		*_len_loc = pkg_hdr; \
 	} \
 	_Pragma("GCC diagnostic pop") \
 } while (false)

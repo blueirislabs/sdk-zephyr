@@ -57,6 +57,8 @@ class Snippet:
                 if not path.is_file():
                     _err(f'snippet file {pathobj}: {variable}: file not found: {path}')
                 return f'"{path}"'
+            if variable in ('DTS_EXTRA_CPPFLAGS'):
+                return f'"{value}"'
             _err(f'unknown append variable: {variable}')
 
         for variable, value in snippet_data.get('append', {}).items():
@@ -78,7 +80,7 @@ class Snippets(UserDict):
     def __init__(self, requested: Iterable[str] = None):
         super().__init__()
         self.paths: Set[Path] = set()
-        self.requested: Set[str] = set(requested or [])
+        self.requested: List[str] = list(requested or [])
 
 class SnippetsError(Exception):
     '''Class for signalling expected errors'''
@@ -138,9 +140,7 @@ set(SNIPPET_PATHS {snippet_path_list})
 zephyr_create_scope(snippets)
 ''')
 
-        for snippet_name in snippet_names:
-            if snippet_name not in snippets.requested:
-                continue
+        for snippet_name in snippets.requested:
             self.print_cmake_for(snippets[snippet_name])
             self.print()
 
@@ -238,6 +238,22 @@ def process_snippets(args: argparse.Namespace) -> Snippets:
 
     return snippets
 
+def find_snippets_in_roots(requested_snippets, snippet_roots) -> Snippets:
+    '''Process snippet.yml files under each *snippet_root*
+    by recursive search. Return a Snippets object describing
+    the results of the search.
+    '''
+    # This will contain information about all the snippets
+    # we discover in each snippet_root element.
+    snippets = Snippets(requested=requested_snippets)
+
+    # Process each path in snippet_root in order, adjusting
+    # snippets as needed for each one.
+    for root in snippet_roots:
+        process_snippets_in(root, snippets)
+
+    return snippets
+
 def process_snippets_in(root_dir: Path, snippets: Snippets) -> None:
     '''Process snippet.yml files in *root_dir*,
     updating *snippets* as needed.'''
@@ -313,7 +329,7 @@ def write_cmake_out(snippets: Snippets, cmake_out: Path) -> None:
     detail and are not meant to be used outside of snippets.cmake.'''
     if not cmake_out.parent.exists():
         cmake_out.parent.mkdir()
-    with open(cmake_out, 'w') as f:
+    with open(cmake_out, 'w', encoding="utf-8") as f:
         SnippetToCMakePrinter(snippets, f).print_cmake()
 
 def main():

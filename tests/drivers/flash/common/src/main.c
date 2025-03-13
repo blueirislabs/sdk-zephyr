@@ -14,9 +14,6 @@
 #define TEST_AREA_DEV_NODE	DT_INST(0, nordic_qspi_nor)
 #elif defined(CONFIG_SPI_NOR)
 #define TEST_AREA_DEV_NODE	DT_INST(0, jedec_spi_nor)
-#elif defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
-/* SoC embedded NVM */
-#define TEST_AREA	slot1_ns_partition
 #else
 #define TEST_AREA	storage_partition
 #endif
@@ -78,7 +75,7 @@ static void *flash_driver_setup(void)
 	}
 
 	/* Check if tested region fits in flash */
-	zassert_true((TEST_AREA_OFFSET + EXPECTED_SIZE) < TEST_AREA_MAX,
+	zassert_true((TEST_AREA_OFFSET + EXPECTED_SIZE) <= TEST_AREA_MAX,
 		     "Test area exceeds flash size");
 
 	/* Check if flash is cleared */

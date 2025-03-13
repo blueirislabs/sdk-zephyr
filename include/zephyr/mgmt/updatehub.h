@@ -7,7 +7,7 @@
 /**
  * @brief UpdateHub Firmware Over-the-Air for Zephyr Project.
  * @defgroup updatehub UpdateHub Firmware Over-the-Air
- * @ingroup lib
+ * @ingroup third_party
  * @{
  */
 
@@ -38,14 +38,6 @@ enum updatehub_response {
 	UPDATEHUB_HAS_UPDATE,
 	UPDATEHUB_NO_UPDATE,
 };
-
-/**
- * @brief Initializes updatehub with a host sockaddr
- *
- * @details Provides the internal updatehub context with an already resolved IP
- * address, such that the updatehub engine does not need to resolve it on the fly.
- */
-__syscall void updatehub_init(struct sockaddr * addr);
 
 /**
  * @brief Runs UpdateHub probe and UpdateHub update automatically.

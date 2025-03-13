@@ -36,7 +36,7 @@ In the simplest usage, run this from your build directory:
 
 The "ARGS_FOR_YOUR_TOOL" value can be any additional
 arguments you want to pass to the tool, such as the location of a
-signing key, a version identifier, etc.
+signing key etc.
 
 See tool-specific help below for details.'''
 
@@ -56,11 +56,10 @@ Assuming your binary was properly built for processing and handling by
 imgtool, this creates zephyr.signed.bin and zephyr.signed.hex
 files which are ready for use by your bootloader.
 
-The image header size, alignment, and slot sizes are determined from
-the build directory using .config and the device tree. A default
-version number of 0.0.0+0 is used (which can be overridden by passing
-"--version x.y.z+w" after "--key"). As shown above, extra arguments
-after a '--' are passed to imgtool directly.
+The version number, image header size, alignment, and slot sizes are
+determined from the build directory using .config and the device tree.
+As shown above, extra arguments after a '--' are passed to imgtool
+directly.
 
 rimage
 ------
@@ -134,7 +133,8 @@ class Sign(Forceable):
         group.add_argument('-D', '--tool-data', default=None,
                            help='''path to a tool-specific data/configuration directory, if needed''')
         group.add_argument('--if-tool-available', action='store_true',
-                           help='''Do not fail if rimage is missing, just warn.''')
+                           help='''Do not fail if the rimage tool is not found or the rimage signing
+schema (rimage "target") is not defined in board.cmake.''')
         group.add_argument('tool_args', nargs='*', metavar='tool_opt',
                            help='extra option(s) to pass to the signing tool')
 
@@ -245,7 +245,8 @@ class ImgtoolSigner(Signer):
         b = pathlib.Path(build_dir)
 
         imgtool = self.find_imgtool(command, args)
-        # The vector table offset is set in Kconfig:
+        # The vector table offset and application version are set in Kconfig:
+        appver = self.get_cfg(command, build_conf, 'CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION')
         vtoff = self.get_cfg(command, build_conf, 'CONFIG_ROM_START_OFFSET')
         # Flash device write alignment and the partition's slot size
         # come from devicetree:
@@ -280,12 +281,8 @@ class ImgtoolSigner(Signer):
             log.inf('rom start offset: {0} (0x{0:x})'.format(vtoff))
 
         # Base sign command.
-        #
-        # We provide a default --version in case the user is just
-        # messing around and doesn't want to set one. It will be
-        # overridden if there is a --version in args.tool_args.
         sign_base = imgtool + ['sign',
-                               '--version', '0.0.0+0',
+                               '--version', str(appver),
                                '--align', str(align),
                                '--header-size', str(vtoff),
                                '--slot-size', str(size)]
@@ -429,22 +426,33 @@ class RimageSigner(Signer):
         b = pathlib.Path(build_dir)
         cache = CMakeCache.from_build_dir(build_dir)
 
-        # warning: RIMAGE_TARGET is a duplicate of CONFIG_RIMAGE_SIGNING_SCHEMA
+        # Warning: RIMAGE_TARGET in Zephyr is a duplicate of
+        # CONFIG_RIMAGE_SIGNING_SCHEMA in SOF.
         target = cache.get('RIMAGE_TARGET')
-        if not target:
-            log.die('rimage target not defined')
 
+        if not target:
+            msg = 'rimage target not defined in board.cmake'
+            if args.if_tool_available:
+                log.inf(msg)
+                sys.exit(0)
+            else:
+                log.die(msg)
+
+        kernel_name = build_conf.get('CONFIG_KERNEL_BIN_NAME', 'zephyr')
+
+        # TODO: make this a new sign.py --bootloader option.
         if target in ('imx8', 'imx8m'):
-            kernel = str(b / 'zephyr' / 'zephyr.elf')
-            out_bin = str(b / 'zephyr' / 'zephyr.ri')
-            out_xman = str(b / 'zephyr' / 'zephyr.ri.xman')
-            out_tmp = str(b / 'zephyr' / 'zephyr.rix')
+            bootloader = None
+            kernel = str(b / 'zephyr' / f'{kernel_name}.elf')
+            out_bin = str(b / 'zephyr' / f'{kernel_name}.ri')
+            out_xman = str(b / 'zephyr' / f'{kernel_name}.ri.xman')
+            out_tmp = str(b / 'zephyr' / f'{kernel_name}.rix')
         else:
             bootloader = str(b / 'zephyr' / 'boot.mod')
             kernel = str(b / 'zephyr' / 'main.mod')
-            out_bin = str(b / 'zephyr' / 'zephyr.ri')
-            out_xman = str(b / 'zephyr' / 'zephyr.ri.xman')
-            out_tmp = str(b / 'zephyr' / 'zephyr.rix')
+            out_bin = str(b / 'zephyr' / f'{kernel_name}.ri')
+            out_xman = str(b / 'zephyr' / f'{kernel_name}.ri.xman')
+            out_tmp = str(b / 'zephyr' / f'{kernel_name}.rix')
 
         # Clean any stale output. This is especially important when using --if-tool-available
         # (but not just)
@@ -494,7 +502,7 @@ class RimageSigner(Signer):
         elif cache.get('RIMAGE_CONFIG_PATH'):
             conf_dir = pathlib.Path(cache['RIMAGE_CONFIG_PATH'])
         else:
-            conf_dir = sof_src_dir / 'rimage' / 'config'
+            conf_dir = sof_src_dir / 'tools' / 'rimage' / 'config'
 
         conf_path_cmd = ['-c', str(conf_dir / cmake_toml)] if conf_dir else []
 
@@ -509,6 +517,13 @@ class RimageSigner(Signer):
         else:
             no_manifest = False
 
+        # Non-SOF build does not have extended manifest data for
+        # rimage to process, which might result in rimage error.
+        # So skip it when not doing SOF builds.
+        is_sof_build = build_conf.getboolean('CONFIG_SOF')
+        if not is_sof_build:
+            no_manifest = True
+
         if no_manifest:
             extra_ri_args = [ ]
         else:
@@ -520,19 +535,23 @@ class RimageSigner(Signer):
         if not args.quiet and args.verbose:
             sign_base += ['-v'] * args.verbose
 
-        components = [ ] if (target in ('imx8', 'imx8m')) else [ bootloader ]
+        components = [ ] if bootloader is None else [ bootloader ]
         components += [ kernel ]
 
         sign_config_extra_args = config_get_words(command.config, 'rimage.extra-args', [])
 
         if '-k' not in sign_config_extra_args + args.tool_args:
-            cmake_default_key = cache.get('RIMAGE_SIGN_KEY')
+            # rimage requires a key argument even when it does not sign
+            cmake_default_key = cache.get('RIMAGE_SIGN_KEY', 'key placeholder from sign.py')
             extra_ri_args += [ '-k', str(sof_src_dir / 'keys' / cmake_default_key) ]
+
+        if '-c' not in sign_config_extra_args + args.tool_args:
+            extra_ri_args += conf_path_cmd
 
         # Warning: while not officially supported (yet?), the rimage --option that is last
         # on the command line currently wins in case of duplicate options. So pay
         # attention to the _args order below.
-        sign_base += (['-o', out_bin] + sign_config_extra_args + conf_path_cmd +
+        sign_base += (['-o', out_bin] + sign_config_extra_args +
                       extra_ri_args + args.tool_args + components)
 
         if not args.quiet:

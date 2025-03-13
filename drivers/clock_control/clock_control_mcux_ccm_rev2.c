@@ -6,7 +6,6 @@
 
 #define DT_DRV_COMPAT nxp_imx_ccm_rev2
 #include <errno.h>
-#include <soc.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/dt-bindings/clock/imx_ccm_rev2.h>
 #include <fsl_clock.h>
@@ -31,7 +30,7 @@ static int mcux_ccm_get_subsys_rate(const struct device *dev,
 					clock_control_subsys_t sub_system,
 					uint32_t *rate)
 {
-	uint32_t clock_name = (uint32_t) sub_system;
+	uint32_t clock_name = (size_t) sub_system;
 	uint32_t clock_root, peripheral, instance;
 
 	peripheral = (clock_name & IMX_CCM_PERIPHERAL_MASK);
@@ -51,6 +50,7 @@ static int mcux_ccm_get_subsys_rate(const struct device *dev,
 
 #ifdef CONFIG_UART_MCUX_LPUART
 	case IMX_CCM_LPUART1_CLK:
+	case IMX_CCM_LPUART2_CLK:
 		clock_root = kCLOCK_Root_Lpuart1 + instance;
 		break;
 #endif
@@ -106,13 +106,11 @@ static int mcux_ccm_get_subsys_rate(const struct device *dev,
 	default:
 		return -EINVAL;
 	}
-
+#ifdef CONFIG_SOC_MIMX93_A55
+	*rate = CLOCK_GetIpFreq(clock_root);
+#else
 	*rate = CLOCK_GetRootClockFreq(clock_root);
-	return 0;
-}
-
-static int mcux_ccm_init(const struct device *dev)
-{
+#endif
 	return 0;
 }
 
@@ -122,9 +120,6 @@ static const struct clock_control_driver_api mcux_ccm_driver_api = {
 	.get_rate = mcux_ccm_get_subsys_rate,
 };
 
-DEVICE_DT_INST_DEFINE(0,
-		    &mcux_ccm_init,
-		    NULL,
-		    NULL, NULL,
-		    PRE_KERNEL_1, CONFIG_CLOCK_CONTROL_INIT_PRIORITY,
-		    &mcux_ccm_driver_api);
+DEVICE_DT_INST_DEFINE(0, NULL, NULL, NULL, NULL, PRE_KERNEL_1,
+		      CONFIG_CLOCK_CONTROL_INIT_PRIORITY,
+		      &mcux_ccm_driver_api);

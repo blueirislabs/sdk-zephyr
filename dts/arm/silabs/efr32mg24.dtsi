@@ -9,11 +9,22 @@
 #include <arm/silabs/gpio_gecko.h>
 #include <dt-bindings/i2c/i2c.h>
 #include <dt-bindings/pinctrl/gecko-pinctrl.h>
+#include <dt-bindings/adc/adc.h>
+#include <freq.h>
 
 / {
 	chosen {
 		zephyr,flash-controller = &msc;
-		zephyr,entropy = &trng;
+		zephyr,entropy = &se;
+	};
+
+	clocks {
+		clk_hfxo: clk-hfxo {
+			#clock-cells = <0>;
+			compatible = "silabs,hfxo";
+			clock-frequency = <DT_FREQ_M(39)>;
+			ctune = <140>;
+		};
 	};
 
 	cpus {
@@ -24,16 +35,45 @@
 			device_type = "cpu";
 			compatible = "arm,cortex-m33";
 			reg = <0>;
-			cpu-power-states = <&state0>;
+			cpu-power-states = <&pstate_em1 &pstate_em2 &pstate_em3>;
 		};
-	};
 
-	power-states {
-		state0: state0 {
-			compatible = "zephyr,power-state";
-			power-state-name = "standby";
-			min-residency-us = <50000>;
-			exit-latency-us = <0>;
+		power-states {
+			/*
+			 * EM1 is a basic "CPU WFI idle", all high-freq clocks remain
+			 * enabled.
+			 */
+			pstate_em1: em1 {
+				compatible = "zephyr,power-state";
+				power-state-name = "runtime-idle";
+				min-residency-us = <4>;
+				/* HFXO remains active */
+				exit-latency-us = <2>;
+			};
+
+			/*
+			 * EM2 is a deepsleep with HF clocks disabled by HW, voltages
+			 * scaled down, etc.
+			 */
+			pstate_em2: em2 {
+				compatible = "zephyr,power-state";
+				power-state-name = "suspend-to-idle";
+				min-residency-us = <260>;
+				exit-latency-us = <250>;
+			};
+
+			/*
+			 * EM3 seems to be exactly the same as EM2 except that
+			 * LFXO & LFRCO should be disabled, so you must use ULFRCO
+			 * as BURTC clock for the system to not lose track of time and
+			 * wake up.
+			 */
+			pstate_em3: em3 {
+				compatible = "zephyr,power-state";
+				power-state-name = "standby";
+				min-residency-us = <20000>;
+				exit-latency-us = <2000>;
+			};
 		};
 	};
 
@@ -67,11 +107,29 @@
 			status = "disabled";
 		};
 
-		trng: trng@5c021000 {
-			compatible = "silabs,gecko-trng";
-			reg = < 0x5C021000 0x1000 >;
+		burtc0: burtc@50064000 {
+			compatible = "silabs,gecko-burtc";
+			reg = <0x50064000 0x3034>;
+			interrupts = <17 0>;
 			status = "disabled";
-			interrupts = < 0x1 0x0 >;
+		};
+
+		se: semailbox@5c021000 {
+			compatible = "silabs,gecko-semailbox";
+			reg = <0x5c021000 0x1000>;
+			status = "disabled";
+			interrupts = <64 3>, <65 3>, <66 3>;
+			interrupt-names = "SETAMPERHOST", "SEMBRX", "SEMBTX";
+		};
+
+		i2c0: i2c@5b000000 {
+			compatible = "silabs,gecko-i2c";
+			clock-frequency = <I2C_BITRATE_STANDARD>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x5b000000 0x3044>;
+			interrupts = <27 0>;
+			status = "disabled";
 		};
 
 		stimer0: stimer@500a8000 {
@@ -144,6 +202,14 @@
 			peripheral-id = <1>;
 			interrupts = <43 0>;
 			status = "disabled";
+		};
+
+		adc0: adc@59004000 {
+			compatible = "silabs,gecko-iadc";
+			reg = <0x59004000 0x4000>;
+			interrupts = <49 0>;
+			status = "disabled";
+			#io-channel-cells = <1>;
 		};
 	};
 };

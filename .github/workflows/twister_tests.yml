@@ -29,7 +29,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: [3.8, 3.9, '3.10']
+        python-version: [3.8, 3.9, '3.10', '3.11', '3.12']
         os: [ubuntu-22.04]
     steps:
     - name: checkout
@@ -48,11 +48,19 @@ jobs:
           ${{ runner.os }}-pip-${{ matrix.python-version }}
     - name: install-packages
       run: |
-        pip3 install -r scripts/requirements-base.txt -r scripts/requirements-build-test.txt
-    - name: Run pytest
+        pip3 install -r scripts/requirements-base.txt -r scripts/requirements-build-test.txt -r scripts/requirements-run-test.txt
+    - name: Run pytest for twisterlib
       env:
         ZEPHYR_BASE: ./
         ZEPHYR_TOOLCHAIN_VARIANT: zephyr
       run: |
         echo "Run twister tests"
         PYTHONPATH=./scripts/tests pytest ./scripts/tests/twister
+    - name: Run pytest for pytest-twister-harness
+      env:
+        ZEPHYR_BASE: ./
+        ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+        PYTHONPATH: ./scripts/pylib/pytest-twister-harness/src:${PYTHONPATH}
+      run: |
+        echo "Run twister tests"
+        pytest ./scripts/pylib/pytest-twister-harness/tests

@@ -274,36 +274,37 @@ static bool start_http_client(void)
 //#endif
 
   if (hb_context.addr) {
-    int ret = connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6));
+    int ret = zsock_connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6));
     //if (connect(hb_context.sock, hb_context.addr, sizeof(struct sockaddr_in6)) < 0) {
     if (ret < 0) {
       LOG_ERR("Failed to connect to server: %d, %d", ret, errno);
       goto err_sock;
     }
   } else {
-    if (connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
+    if (zsock_connect(hb_context.sock, addr->ai_addr, addr->ai_addrlen) < 0) {
       LOG_ERR("Failed to connect to server");
       goto err_sock;
     }
   }
 
   if (addr) {
-    freeaddrinfo(addr);
+    zsock_freeaddrinfo(addr);
   }
-	return true;
+
+  return true;
 
 err_sock:
-	close(hb_context.sock);
+	zsock_close(hb_context.sock);
 err:
   if (addr) {
-    freeaddrinfo(addr);
+    zsock_freeaddrinfo(addr);
   }
 	return false;
 }
 
 static void cleanup_connection(void)
 {
-	if (close(hb_context.sock) < 0) {
+	if (zsock_close(hb_context.sock) < 0) {
 		LOG_ERR("Could not close the socket");
 	}
 }

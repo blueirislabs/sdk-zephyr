@@ -476,6 +476,14 @@ static int lis2dw12_init(const struct device *dev)
 		return ret;
 	}
 
+#ifdef CONFIG_LIS2DW12_THRESHOLD
+	ret = lis2dw12_wkup_dur_set(ctx, cfg->wakeup_duration);
+	if (ret < 0) {
+		LOG_ERR("wakeup duration config error %d", ret);
+		return ret;
+	}
+#endif /* CONFIG_LIS2DW12_THRESHOLD */
+
 	return 0;
 }
 
@@ -521,6 +529,13 @@ static int lis2dw12_init(const struct device *dev)
 #define LIS2DW12_CONFIG_FREEFALL(inst)
 #endif /* CONFIG_LIS2DW12_FREEFALL */
 
+#ifdef CONFIG_LIS2DW12_THRESHOLD
+#define LIS2DW12_CONFIG_THRESHOLD(inst)					\
+	.wakeup_duration = DT_INST_PROP(inst, wakeup_duration),
+#else
+#define LIS2DW12_CONFIG_THRESHOLD(inst)
+#endif
+
 #ifdef CONFIG_LIS2DW12_TRIGGER
 #define LIS2DW12_CFG_IRQ(inst) \
 	.gpio_int = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),		\
@@ -529,6 +544,21 @@ static int lis2dw12_init(const struct device *dev)
 #define LIS2DW12_CFG_IRQ(inst)
 #endif /* CONFIG_LIS2DW12_TRIGGER */
 
+#define LIS2DW12_CONFIG_COMMON(inst)					\
+	.pm = DT_INST_PROP(inst, power_mode),				\
+	.odr = DT_INST_PROP_OR(inst, odr, 12),				\
+	.range = DT_INST_PROP(inst, range),				\
+	.bw_filt = DT_INST_PROP(inst, bw_filt),				\
+	.low_noise = DT_INST_PROP(inst, low_noise),			\
+	.hp_filter_path = DT_INST_PROP(inst, hp_filter_path),		\
+	.hp_ref_mode = DT_INST_PROP(inst, hp_ref_mode),			\
+	.drdy_pulsed = DT_INST_PROP(inst, drdy_pulsed),			\
+	LIS2DW12_CONFIG_TAP(inst)					\
+	LIS2DW12_CONFIG_FREEFALL(inst)					\
+	LIS2DW12_CONFIG_THRESHOLD(inst)					\
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, irq_gpios),		\
+			(LIS2DW12_CFG_IRQ(inst)), ())
+
 #define LIS2DW12_SPI_OPERATION (SPI_WORD_SET(8) |			\
 				SPI_OP_MODE_MASTER |			\
 				SPI_MODE_CPOL |				\
@@ -536,33 +566,13 @@ static int lis2dw12_init(const struct device *dev)
 
 #define LIS2DW12_CONFIG_SPI(inst)					\
 	{								\
-		.ctx = {						\
-			.read_reg =					\
-			   (stmdev_read_ptr) stmemsc_spi_read,		\
-			.write_reg =					\
-			   (stmdev_write_ptr) stmemsc_spi_write,	\
-			.mdelay =					\
-			   (stmdev_mdelay_ptr) stmemsc_mdelay,		\
-			.handle =					\
-			   (void *)&lis2dw12_config_##inst.stmemsc_cfg,	\
-		},							\
+		STMEMSC_CTX_SPI(&lis2dw12_config_##inst.stmemsc_cfg),	\
 		.stmemsc_cfg = {					\
 			.spi = SPI_DT_SPEC_INST_GET(inst,		\
 					   LIS2DW12_SPI_OPERATION,	\
 					   0),				\
 		},							\
-		.pm = DT_INST_PROP(inst, power_mode),			\
-		.odr = DT_INST_PROP_OR(inst, odr, 12),			\
-		.range = DT_INST_PROP(inst, range),			\
-		.bw_filt = DT_INST_PROP(inst, bw_filt),      \
-		.low_noise = DT_INST_PROP(inst, low_noise),      \
-		.hp_filter_path = DT_INST_PROP(inst, hp_filter_path),      \
-		.hp_ref_mode = DT_INST_PROP(inst, hp_ref_mode), \
-		.drdy_pulsed = DT_INST_PROP(inst, drdy_pulsed),      \
-		LIS2DW12_CONFIG_TAP(inst)				\
-		LIS2DW12_CONFIG_FREEFALL(inst)		\
-		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, irq_gpios),	\
-			(LIS2DW12_CFG_IRQ(inst)), ())			\
+		LIS2DW12_CONFIG_COMMON(inst)				\
 	}
 
 /*
@@ -571,31 +581,11 @@ static int lis2dw12_init(const struct device *dev)
 
 #define LIS2DW12_CONFIG_I2C(inst)					\
 	{								\
-		.ctx = {						\
-			.read_reg =					\
-			   (stmdev_read_ptr) stmemsc_i2c_read,		\
-			.write_reg =					\
-			   (stmdev_write_ptr) stmemsc_i2c_write,	\
-			.mdelay =					\
-			   (stmdev_mdelay_ptr) stmemsc_mdelay,		\
-			.handle =					\
-			   (void *)&lis2dw12_config_##inst.stmemsc_cfg,	\
-		},							\
+		STMEMSC_CTX_I2C(&lis2dw12_config_##inst.stmemsc_cfg),	\
 		.stmemsc_cfg = {					\
 			.i2c = I2C_DT_SPEC_INST_GET(inst),		\
 		},							\
-		.pm = DT_INST_PROP(inst, power_mode),			\
-		.odr = DT_INST_PROP_OR(inst, odr, 12),			\
-		.range = DT_INST_PROP(inst, range),			\
-		.bw_filt = DT_INST_PROP(inst, bw_filt),      \
-		.low_noise = DT_INST_PROP(inst, low_noise),      \
-		.hp_filter_path = DT_INST_PROP(inst, hp_filter_path),      \
-		.hp_ref_mode = DT_INST_PROP(inst, hp_ref_mode), \
-		.drdy_pulsed = DT_INST_PROP(inst, drdy_pulsed),      \
-		LIS2DW12_CONFIG_TAP(inst)				\
-		LIS2DW12_CONFIG_FREEFALL(inst)		\
-		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, irq_gpios),	\
-			(LIS2DW12_CFG_IRQ(inst)), ())			\
+		LIS2DW12_CONFIG_COMMON(inst)				\
 	}
 
 /*

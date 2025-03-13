@@ -55,10 +55,10 @@ For example, to build for the nRF52832 Development Kit:
 
 .. _bluetooth-hci-uart-qemu-posix:
 
-Using the controller with QEMU and Native POSIX
-===============================================
+Using the controller with QEMU or native_sim
+============================================
 
-In order to use the HCI UART controller with QEMU or Native POSIX you will need
+In order to use the HCI UART controller with QEMU or :ref:`native_sim <native_sim>` you will need
 to attach it to the Linux Host first. To do so simply build the sample and
 connect the UART to the Linux machine, and then attach it with this command:
 
@@ -84,7 +84,7 @@ If you are running :file:`btmon` you should see a brief log showing how the
 Linux kernel identifies the attached controller.
 
 Once the controller is attached follow the instructions in the
-:ref:`bluetooth_qemu_posix` section to use QEMU with it.
+:ref:`bluetooth_qemu_native` section to use QEMU with it.
 
 .. _bluetooth-hci-uart-bluez:
 
@@ -147,7 +147,7 @@ Check the :ref:`bluetooth_direction_finding_connectionless_rx` and the :ref:`blu
 Using a USB CDC ACM UART
 ========================
 
-The sample can be configured to use a USB UART instead. See :zephyr_file:`samples/bluetooth/hci_uart/nrf52840dongle_nrf52840.conf` and :zephyr_file:`samples/bluetooth/hci_uart/nrf52840dongle_nrf52840.overlay`.
+The sample can be configured to use a USB UART instead. See :zephyr_file:`samples/bluetooth/hci_uart/boards/nrf52840dongle_nrf52840.conf` and :zephyr_file:`samples/bluetooth/hci_uart/boards/nrf52840dongle_nrf52840.overlay`.
 
 Using the controller with the Zephyr host
 =========================================

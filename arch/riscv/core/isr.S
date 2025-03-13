@@ -14,6 +14,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/syscall.h>
 #include <zephyr/arch/riscv/csr.h>
+#include <zephyr/arch/riscv/irq.h>
 #include <zephyr/arch/riscv/syscall.h>
 #include "asm_macros.inc"
 
@@ -50,7 +51,9 @@
 
 /* imports */
 GDATA(_sw_isr_table)
+#ifdef CONFIG_RISCV_SOC_EXCEPTION_FROM_IRQ
 GTEXT(__soc_is_irq)
+#endif
 GTEXT(__soc_handle_irq)
 GTEXT(_Fault)
 #ifdef CONFIG_RISCV_SOC_CONTEXT_SAVE
@@ -90,7 +93,8 @@ GTEXT(_isr_wrapper)
  * what standard behavior is defined). Hence, the arch level code expects
  * the following functions to be provided at the SOC level:
  *
- *     - __soc_is_irq: decide if we're handling an interrupt or an exception
+ *     - __soc_is_irq (optional): decide if we're handling an interrupt or an
+         exception
  *     - __soc_handle_irq: handle SoC-specific details for a pending IRQ
  *       (e.g. clear a pending bit in a SoC-specific register)
  *
@@ -102,6 +106,9 @@ GTEXT(_isr_wrapper)
  * Handler called upon each exception/interrupt/fault
  */
 SECTION_FUNC(exception.entry, _isr_wrapper)
+
+/* Provide requested alignment, which depends e.g. on MTVEC format */
+.balign CONFIG_RISCV_TRAP_HANDLER_ALIGNMENT
 
 #ifdef CONFIG_USERSPACE
 	/* retrieve address of _current_cpu preserving s0 */
@@ -184,10 +191,23 @@ SECTION_FUNC(exception.entry, _isr_wrapper)
 1:
 #endif
 	andi t0, t2, 0x7f	/* keep only the opcode bits */
+	/*
+	 * Major FP opcodes:
+	 * 0000111 = LOAD-FP
+	 * 0100111 = STORE-FP
+	 * 1000011 = MADD
+	 * 1000111 = MSUB
+	 * 1001011 = NMSUB
+	 * 1001111 = NMADD
+	 * 1010011 = OP-FP
+	 */
 	xori t1, t0, 0b1010011	/* OP-FP */
 	beqz t1, is_fp
-	ori  t0, t0, 0b0100000
-	xori t1, t0, 0b0100111	/* LOAD-FP / STORE-FP */
+	ori  t1, t0, 0b0100000
+	xori t1, t1, 0b0100111	/* LOAD-FP / STORE-FP */
+	beqz t1, is_fp
+	ori  t1, t0, 0b0001100
+	xori t1, t1, 0b1001111	/* MADD / MSUB / NMSUB / NMADD */
 	beqz t1, is_fp
 	/*
 	 * The FRCSR, FSCSR, FRRM, FSRM, FSRMI, FRFLAGS, FSFLAGS and FSFLAGSI
@@ -267,10 +287,14 @@ no_fp:	/* increment _current->arch.exception_depth */
 	 * function (that needs to be implemented by each SOC). The result is
 	 * returned via register a0 (1: interrupt, 0 exception)
 	 */
+#ifdef CONFIG_RISCV_SOC_EXCEPTION_FROM_IRQ
 	jal ra, __soc_is_irq
-
-	/* If a0 != 0, jump to is_interrupt */
 	bnez a0, is_interrupt
+#else
+	csrr t0, mcause
+	srli t0, t0, RISCV_MCAUSE_IRQ_POS
+	bnez t0, is_interrupt
+#endif
 
 	/*
 	 * If the exception is the result of an ECALL, check whether to
@@ -278,22 +302,22 @@ no_fp:	/* increment _current->arch.exception_depth */
 	 * to report the exception.
 	 */
 	csrr t0, mcause
-	li t2, SOC_MCAUSE_EXP_MASK
+	li t2, CONFIG_RISCV_MCAUSE_EXCEPTION_MASK
 	and t0, t0, t2
 
 	/*
-	 * If mcause == SOC_MCAUSE_ECALL_EXP, handle system call from
+	 * If mcause == RISCV_EXC_ECALLM, handle system call from
 	 * kernel thread.
 	 */
-	li t1, SOC_MCAUSE_ECALL_EXP
+	li t1, RISCV_EXC_ECALLM
 	beq t0, t1, is_kernel_syscall
 
 #ifdef CONFIG_USERSPACE
 	/*
-	 * If mcause == SOC_MCAUSE_USER_ECALL_EXP, handle system call
+	 * If mcause == RISCV_EXC_ECALLU, handle system call
 	 * for user mode thread.
 	 */
-	li t1, SOC_MCAUSE_USER_ECALL_EXP
+	li t1, RISCV_EXC_ECALLU
 	beq t0, t1, is_user_syscall
 #endif /* CONFIG_USERSPACE */
 
@@ -511,7 +535,7 @@ on_irq_stack:
 
 	/* Get IRQ causing interrupt */
 	csrr a0, mcause
-	li t0, SOC_MCAUSE_EXP_MASK
+	li t0, CONFIG_RISCV_MCAUSE_EXCEPTION_MASK
 	and a0, a0, t0
 
 	/*
@@ -557,6 +581,8 @@ irq_done:
 
 check_reschedule:
 
+#ifdef CONFIG_MULTITHREADING
+
 	/* Get pointer to current thread on this CPU */
 	lr a1, ___cpu_t_current_OFFSET(s0)
 
@@ -586,6 +612,8 @@ z_riscv_thread_start:
 might_have_rescheduled:
 	/* reload s0 with &_current_cpu as it might have changed or be unset */
 	get_current_cpu s0
+
+#endif /* CONFIG_MULTITHREADING */
 
 no_reschedule:
 

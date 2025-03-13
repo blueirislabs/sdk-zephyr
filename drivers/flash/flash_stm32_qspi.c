@@ -91,6 +91,9 @@ struct flash_stm32_qspi_config {
 #if STM32_QSPI_RESET_GPIO
 	const struct gpio_dt_spec reset;
 #endif
+#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_qspi_nor), jedec_id)
+	uint8_t jedec_id[DT_INST_PROP_LEN(0, jedec_id)];
+#endif /* jedec_id */
 };
 
 struct flash_stm32_qspi_data {
@@ -284,12 +287,62 @@ static int qspi_write_access(const struct device *dev, QSPI_CommandTypeDef *cmd,
 	return dev_data->cmd_status;
 }
 
+#if defined(CONFIG_FLASH_JESD216_API)
+/*
+ * Read Serial Flash ID :
+ * perform a read access over SPI bus for read Identification (DataMode is already set)
+ * and compare to the jedec-id from the DTYS table exists
+ */
+static int qspi_read_jedec_id(const struct device *dev, uint8_t *id)
+{
+	struct flash_stm32_qspi_data *dev_data = dev->data;
+	uint8_t data[JESD216_READ_ID_LEN];
+
+	QSPI_CommandTypeDef cmd = {
+		.Instruction = JESD216_CMD_READ_ID,
+		.AddressSize = QSPI_ADDRESS_NONE,
+		.DummyCycles = 8,
+		.InstructionMode = QSPI_INSTRUCTION_1_LINE,
+		.AddressMode = QSPI_ADDRESS_1_LINE,
+		.DataMode = QSPI_DATA_1_LINE,
+		.NbData = JESD216_READ_ID_LEN,
+	};
+
+	HAL_StatusTypeDef hal_ret;
+
+	hal_ret = HAL_QSPI_Command_IT(&dev_data->hqspi, &cmd);
+
+	if (hal_ret != HAL_OK) {
+		LOG_ERR("%d: Failed to send OSPI instruction", hal_ret);
+		return -EIO;
+	}
+
+	hal_ret = HAL_QSPI_Receive(&dev_data->hqspi, data, HAL_QSPI_TIMEOUT_DEFAULT_VALUE);
+	if (hal_ret != HAL_OK) {
+		LOG_ERR("%d: Failed to read data", hal_ret);
+		return -EIO;
+	}
+
+	dev_data->cmd_status = 0;
+	id = &data[0];
+
+	return 0;
+}
+#endif /* CONFIG_FLASH_JESD216_API */
+
 /*
  * Read Serial Flash Discovery Parameter
  */
-static int qspi_read_sfdp(const struct device *dev, off_t addr, uint8_t *data,
+static int qspi_read_sfdp(const struct device *dev, off_t addr, void *data,
 			  size_t size)
 {
+	struct flash_stm32_qspi_data *dev_data = dev->data;
+	HAL_StatusTypeDef hal_ret;
+
+	__ASSERT(data != NULL, "null destination");
+
+	LOG_INF("Reading SFDP");
+
 	QSPI_CommandTypeDef cmd = {
 		.Instruction = JESD216_CMD_READ_SFDP,
 		.Address = addr,
@@ -298,9 +351,26 @@ static int qspi_read_sfdp(const struct device *dev, off_t addr, uint8_t *data,
 		.InstructionMode = QSPI_INSTRUCTION_1_LINE,
 		.AddressMode = QSPI_ADDRESS_1_LINE,
 		.DataMode = QSPI_DATA_1_LINE,
+		.NbData = size,
 	};
 
-	return qspi_read_access(dev, &cmd, data, size);
+	hal_ret = HAL_QSPI_Command(&dev_data->hqspi, &cmd,
+				   HAL_QSPI_TIMEOUT_DEFAULT_VALUE);
+	if (hal_ret != HAL_OK) {
+		LOG_ERR("%d: Failed to send SFDP instruction", hal_ret);
+		return -EIO;
+	}
+
+	hal_ret = HAL_QSPI_Receive(&dev_data->hqspi, (uint8_t *)data,
+				   HAL_QSPI_TIMEOUT_DEFAULT_VALUE);
+	if (hal_ret != HAL_OK) {
+		LOG_ERR("%d: Failed to read SFDP", hal_ret);
+		return -EIO;
+	}
+
+	dev_data->cmd_status = 0;
+
+	return 0;
 }
 
 static bool qspi_address_is_valid(const struct device *dev, off_t addr,
@@ -556,7 +626,9 @@ static void qspi_dma_callback(const struct device *dev, void *arg,
 {
 	DMA_HandleTypeDef *hdma = arg;
 
-	if (status != 0) {
+	ARG_UNUSED(dev);
+
+	if (status < 0) {
 		LOG_ERR("DMA callback error with channel %d.", channel);
 
 	}
@@ -564,6 +636,11 @@ static void qspi_dma_callback(const struct device *dev, void *arg,
 	HAL_DMA_IRQHandler(hdma);
 }
 #endif
+
+__weak HAL_StatusTypeDef HAL_DMA_Abort(DMA_HandleTypeDef *hdma)
+{
+	return HAL_OK;
+}
 
 __weak HAL_StatusTypeDef HAL_DMA_Abort_IT(DMA_HandleTypeDef *hdma)
 {
@@ -664,6 +741,10 @@ static const struct flash_driver_api flash_stm32_qspi_driver_api = {
 #if defined(CONFIG_FLASH_PAGE_LAYOUT)
 	.page_layout = flash_stm32_qspi_pages_layout,
 #endif
+#if defined(CONFIG_FLASH_JESD216_API)
+	.sfdp_read = qspi_read_sfdp,
+	.read_jedec_id = qspi_read_jedec_id,
+#endif /* CONFIG_FLASH_JESD216_API */
 };
 
 #if defined(CONFIG_FLASH_PAGE_LAYOUT)
@@ -717,8 +798,22 @@ static int setup_pages_layout(const struct device *dev)
 }
 #endif /* CONFIG_FLASH_PAGE_LAYOUT */
 
-static int qspi_program_addr_4b(const struct device *dev)
+static int qspi_program_addr_4b(const struct device *dev, bool write_enable)
 {
+	int ret;
+
+	/* Send write enable command, if required */
+	if (write_enable) {
+		QSPI_CommandTypeDef cmd_write_en = {
+			.Instruction = SPI_NOR_CMD_WREN,
+			.InstructionMode = QSPI_INSTRUCTION_1_LINE,
+		};
+		ret = qspi_send_cmd(dev, &cmd_write_en);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
 	/* Program the flash memory to use 4 bytes addressing */
 	QSPI_CommandTypeDef cmd = {
 		.Instruction = SPI_NOR_CMD_4BA,
@@ -956,9 +1051,10 @@ static int spi_nor_process_bfp(const struct device *dev,
 			 * portion of flash description register 16 indicates
 			 * if it is enough to use 0xB7 instruction without
 			 * write enable to switch to 4 bytes addressing mode.
+			 * If bit 1 is set, a write enable is needed.
 			 */
-			if (dw16.enter_4ba & 0x1) {
-				rc = qspi_program_addr_4b(dev);
+			if (dw16.enter_4ba & 0x3) {
+				rc = qspi_program_addr_4b(dev, dw16.enter_4ba & 2);
 				if (rc == 0) {
 					data->flag_access_32bit = true;
 					LOG_INF("Flash - address mode: 4B");
@@ -1240,13 +1336,14 @@ static int flash_stm32_qspi_init(const struct device *dev)
 
 		if (id == JESD216_SFDP_PARAM_ID_BFP) {
 			union {
-				uint32_t dw[MIN(php->len_dw, 20)];
+				uint32_t dw[20];
 				struct jesd216_bfp bfp;
-			} u;
-			const struct jesd216_bfp *bfp = &u.bfp;
+			} u2;
+			const struct jesd216_bfp *bfp = &u2.bfp;
 
 			ret = qspi_read_sfdp(dev, jesd216_param_addr(php),
-					     (uint8_t *)u.dw, sizeof(u.dw));
+					     (uint8_t *)u2.dw,
+					     MIN(sizeof(uint32_t) * php->len_dw, sizeof(u2.dw)));
 			if (ret == 0) {
 				ret = spi_nor_process_bfp(dev, php, bfp);
 			}
@@ -1329,6 +1426,9 @@ static const struct flash_stm32_qspi_config flash_stm32_qspi_cfg = {
 #if STM32_QSPI_RESET_GPIO
 	.reset = GPIO_DT_SPEC_INST_GET(0, reset_gpios),
 #endif
+#if DT_NODE_HAS_PROP(DT_INST(0, st_stm32_qspi_nor), jedec_id)
+	.jedec_id = DT_INST_PROP(0, jedec_id),
+#endif /* jedec_id */
 };
 
 static struct flash_stm32_qspi_data flash_stm32_qspi_dev_data = {

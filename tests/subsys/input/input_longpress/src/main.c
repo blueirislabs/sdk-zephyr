@@ -14,12 +14,7 @@ static const struct device *const fake_dev = DEVICE_DT_GET(
 static const struct device *const longpress_dev = DEVICE_DT_GET(
 		DT_NODELABEL(longpress));
 
-static int device_init(const struct device *dev)
-{
-	return 0;
-}
-
-DEVICE_DT_DEFINE(DT_INST(0, vnd_input_device), device_init, NULL, NULL, NULL,
+DEVICE_DT_DEFINE(DT_INST(0, vnd_input_device), NULL, NULL, NULL, NULL,
 		 PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, NULL);
 
 static int event_count;
@@ -33,7 +28,7 @@ static void test_cb(struct input_event *evt)
 	memcpy(&last_events[1], &last_events[0], sizeof(struct input_event));
 	memcpy(&last_events[0], evt, sizeof(struct input_event));
 }
-INPUT_LISTENER_CB_DEFINE(longpress_dev, test_cb);
+INPUT_CALLBACK_DEFINE(longpress_dev, test_cb);
 
 ZTEST(longpress, test_longpress_test)
 {
