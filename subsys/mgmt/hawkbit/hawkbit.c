@@ -153,7 +153,7 @@ struct hawkbit_context {
 struct s_object {
 	struct smf_ctx ctx;
 	struct hawkbit_context hb_context;
-	char device_id[DEVICE_ID_HEX_MAX_SIZE];
+	char controller_id[CONTROLLER_ID_MAX_SIZE];
 };
 
 static const struct smf_state hawkbit_states[];
@@ -170,7 +170,7 @@ enum hawkbit_state {
 	S_HAWKBIT_TERMINATE,
 };
 
-int hawkbit_default_config_data_cb(const char *device_id, uint8_t *buffer,
+int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
 			      const size_t buffer_size);
 
 static hawkbit_config_device_data_cb_handler_t hawkbit_config_device_data_cb_handler =
@@ -796,11 +796,12 @@ int hawkbit_set_custom_data_cb(hawkbit_config_device_data_cb_handler_t cb)
 	return -ENOTSUP;
 }
 
-int hawkbit_default_config_data_cb(const char *device_id, uint8_t *buffer, const size_t buffer_size)
+int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
+				const size_t buffer_size)
 {
 	struct hawkbit_cfg cfg = {
 		.mode = "merge",
-		.data.VIN = device_id,
+		.data.VIN = controller_id,
 	};
 
 	return json_obj_encode_buf(json_cfg_descr, ARRAY_SIZE(json_cfg_descr), &cfg, buffer,
@@ -1261,7 +1262,7 @@ static void s_start(void *o)
 		return;
 	}
 
-	if (!hawkbit_get_device_identity(s->device_id, DEVICE_ID_HEX_MAX_SIZE)) {
+	if (!hawkbit_get_device_identity(s->controller_id, CONTROLLER_ID_MAX_SIZE)) {
 		k_sem_give(&probe_sem);
 		smf_set_terminate(SMF_CTX(s), HAWKBIT_METADATA_ERROR);
 		return;
@@ -1312,8 +1313,7 @@ static void s_probe(void *o)
 
 	LOG_INF("Polling target data from hawkBit");
 
-	snprintk(url_buffer, sizeof(url_buffer), "%s/%s-%s", HAWKBIT_JSON_URL, CONFIG_BOARD,
-		 s->device_id);
+	snprintk(url_buffer, sizeof(url_buffer), "%s/%s", HAWKBIT_JSON_URL, s->controller_id);
 
 	if (!send_request(&s->hb_context, HAWKBIT_PROBE, url_buffer, NULL)) {
 		LOG_ERR("Send request failed (%s)", "HAWKBIT_PROBE");
@@ -1427,7 +1427,7 @@ static void s_config_device(void *o)
 		return;
 	}
 
-	ret = hawkbit_config_device_data_cb_handler(s->device_id, status_buffer,
+	ret = hawkbit_config_device_data_cb_handler(s->controller_id, status_buffer,
 						    sizeof(status_buffer));
 	if (ret) {
 		LOG_ERR("Can't encode the JSON script (%s): %d", "HAWKBIT_CONFIG_DEVICE", ret);
@@ -1503,9 +1503,8 @@ static void s_report(void *o)
 	uint8_t status_buffer[CONFIG_HAWKBIT_STATUS_BUFFER_SIZE] = {0};
 	char url_buffer[URL_BUFFER_SIZE] = {0};
 
-	snprintk(url_buffer, sizeof(url_buffer), "%s/%s-%s/%s/%d/%s", HAWKBIT_JSON_URL,
-		 CONFIG_BOARD, s->device_id, "deploymentBase", s->hb_context.json_action_id,
-		 "feedback");
+	snprintk(url_buffer, sizeof(url_buffer), "%s/%s/%s/%d/%s", HAWKBIT_JSON_URL,
+		 s->controller_id, "deploymentBase", s->hb_context.json_action_id, "feedback");
 
 	LOG_INF("Reporting deployment feedback %s (%s) for action %d",
 		feedback.status.result.finished, feedback.status.execution,
