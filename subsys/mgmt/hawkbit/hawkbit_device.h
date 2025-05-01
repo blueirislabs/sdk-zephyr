@@ -18,6 +18,8 @@
 #define DEVICE_ID_HEX_MAX_SIZE ((DEVICE_ID_BIN_MAX_SIZE * 2) + 1)
 #endif
 
+#define CONTROLLER_ID_MAX_SIZE	(32 + DEVICE_ID_HEX_MAX_SIZE)
+
 bool hawkbit_get_device_identity(char *id, int id_max_len);
 
 #endif /* __HAWKBIT_DEVICE_H__ */

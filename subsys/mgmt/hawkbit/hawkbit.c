@@ -39,13 +39,13 @@
 
 LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 
-#define RECV_BUFFER_SIZE           640
-#define URL_BUFFER_SIZE            300
-#define SHA256_HASH_SIZE           32
-#define RESPONSE_BUFFER_SIZE       1100
-#define DDI_SECURITY_TOKEN_SIZE    32
-#define RANGE_HEADER_SIZE          50
-#define HAWKBIT_RECV_TIMEOUT       (300 * MSEC_PER_SEC)
+#define RECV_BUFFER_SIZE 640
+#define URL_BUFFER_SIZE 300
+#define SHA256_HASH_SIZE 32
+#define RESPONSE_BUFFER_SIZE 1100
+#define DDI_SECURITY_TOKEN_SIZE 32
+#define RANGE_HEADER_SIZE 50
+#define HAWKBIT_RECV_TIMEOUT (300 * MSEC_PER_SEC)
 #define HAWKBIT_SET_SERVER_TIMEOUT K_MSEC(300)
 
 #define HAWKBIT_JSON_URL "/" CONFIG_HAWKBIT_TENANT "/controller/v1"
@@ -53,7 +53,7 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #define HTTP_HEADER_CONTENT_TYPE_JSON "application/json;charset=UTF-8"
 
 #define SLOT1_LABEL slot1_partition
-#define SLOT1_SIZE  FIXED_PARTITION_SIZE(SLOT1_LABEL)
+#define SLOT1_SIZE FIXED_PARTITION_SIZE(SLOT1_LABEL)
 
 static uint32_t poll_sleep = (CONFIG_HAWKBIT_POLL_INTERVAL * SEC_PER_MIN);
 
@@ -146,7 +146,7 @@ struct hawkbit_context {
 struct s_object {
 	struct smf_ctx ctx;
 	struct hawkbit_context hb_context;
-	char controller_id[DEVICE_ID_HEX_MAX_SIZE];
+	char controller_id[CONTROLLER_ID_MAX_SIZE];
 };
 
 static const struct smf_state hawkbit_states[];
@@ -654,7 +654,8 @@ static char *hawkbit_get_url(const char *href)
 /*
  * Find URL component for the device cancel action id
  */
-static int hawkbit_find_cancel_action_id(struct hawkbit_ctl_res *res, int32_t *cancel_action_id)
+static int hawkbit_find_cancel_action_id(struct hawkbit_ctl_res *res,
+					  int32_t *cancel_action_id)
 {
 	char *helper;
 
@@ -1255,7 +1256,7 @@ static void s_start(void *o)
 		return;
 	}
 
-	if (!hawkbit_get_device_identity(s->controller_id, DEVICE_ID_HEX_MAX_SIZE)) {
+	if (!hawkbit_get_device_identity(s->controller_id, CONTROLLER_ID_MAX_SIZE)) {
 		k_sem_give(&probe_sem);
 		smf_set_terminate(SMF_CTX(s), HAWKBIT_METADATA_ERROR);
 		return;
