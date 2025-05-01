@@ -806,6 +806,8 @@ int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
 int hawkbit_set_config(struct hawkbit_runtime_config *config)
 {
+	size_t length;
+
 	if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
 		if (config->server_addr != NULL) {
 			hb_cfg.server_addr_set = true;
@@ -815,6 +817,12 @@ int hawkbit_set_config(struct hawkbit_runtime_config *config)
 		}
 		if (config->server_hostname != NULL) {
 			hb_cfg.server_hostname_set = true;
+			length = strnlen(config->server_hostname, DNS_MAX_NAME_SIZE + 1);
+			if (length > DNS_MAX_NAME_SIZE) {
+				LOG_ERR("%s too long: %s", "hawkbit/server_hostname",
+					config->server_hostname);
+				return -EINVAL;
+			}
 			strncpy(hb_cfg.server_hostname, config->server_hostname,
 				sizeof(hb_cfg.server_hostname));
 			LOG_DBG("configured %s: %s", "hawkbit/server_hostname",
