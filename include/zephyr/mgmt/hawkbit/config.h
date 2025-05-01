@@ -29,8 +29,10 @@
  * settings.
  */
 struct hawkbit_runtime_config {
-	/** Server address */
+	/** Server ip address */
 	char *server_addr;
+	/** Server hostname*/
+	char *server_domain;
 	/** Server port */
 	uint16_t server_port;
 	/** Security token */
@@ -44,6 +46,7 @@ struct hawkbit_runtime_config {
  *
  * @param config Configuration settings to set.
  * @retval 0 on success.
+ * @retval -EINVAL if string length mismatch for server_domain
  * @retval -EAGAIN if probe is currently running.
  */
 int hawkbit_set_config(struct hawkbit_runtime_config *config);
@@ -54,6 +57,29 @@ int hawkbit_set_config(struct hawkbit_runtime_config *config);
  * @return Configuration settings.
  */
 struct hawkbit_runtime_config hawkbit_get_config(void);
+
+#ifdef CONFIG_HAWKBIT_USE_DOMAIN_NAME
+/**
+ * @brief Set the hawkBit server hostname.
+ *
+ * @param hostname_str Server hostname to set.
+ * @retval 0 on success.
+ * @retval -EINVAL if string length mismatch for server_domain
+ * @retval -EAGAIN if probe is currently running.
+ */
+static inline int hawkbit_set_server_domain(char *domain_str)
+{
+	struct hawkbit_runtime_config set_config = {
+		.server_addr = NULL,
+		.server_domain = domain_str,
+		.server_port = 0,
+		.auth_token = NULL,
+		.tls_tag = 0,
+	};
+
+	return hawkbit_set_config(&set_config);
+}
+#endif /* CONFIG_HAWKBIT_USE_DOMAIN_NAME */
 
 /**
  * @brief Set the hawkBit server address.
@@ -66,6 +92,7 @@ static inline int hawkbit_set_server_addr(char *addr_str)
 {
 	struct hawkbit_runtime_config set_config = {
 		.server_addr = addr_str,
+		.server_domain = NULL,
 		.server_port = 0,
 		.auth_token = NULL,
 		.tls_tag = 0,
@@ -85,6 +112,7 @@ static inline int hawkbit_set_server_port(uint16_t port)
 {
 	struct hawkbit_runtime_config set_config = {
 		.server_addr = NULL,
+		.server_domain = NULL,
 		.server_port = port,
 		.auth_token = NULL,
 		.tls_tag = 0,
@@ -104,6 +132,7 @@ static inline int hawkbit_set_ddi_security_token(char *token)
 {
 	struct hawkbit_runtime_config set_config = {
 		.server_addr = NULL,
+		.server_domain = NULL,
 		.server_port = 0,
 		.auth_token = token,
 		.tls_tag = 0,
@@ -123,6 +152,7 @@ static inline int hawkbit_set_tls_tag(sec_tag_t tag)
 {
 	struct hawkbit_runtime_config set_config = {
 		.server_addr = NULL,
+		.server_domain = NULL,
 		.server_port = 0,
 		.auth_token = NULL,
 		.tls_tag = tag,
@@ -140,6 +170,18 @@ static inline char *hawkbit_get_server_addr(void)
 {
 	return hawkbit_get_config().server_addr;
 }
+
+#ifdef CONFIG_HAWKBIT_USE_DOMAIN_NAME
+/**
+ * @brief Get the hawkBit server hostname.
+ *
+ * @return Server hostname.
+ */
+static inline char *hawkbit_get_server_domain(void)
+{
+	return hawkbit_get_config().server_domain;
+}
+#endif /* CONFIG_HAWKBIT_USE_DOMAIN_NAME */
 
 /**
  * @brief Get the hawkBit server port.

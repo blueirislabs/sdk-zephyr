@@ -71,6 +71,12 @@ config HAWKBIT_SET_SETTINGS_RUNTIME
 	help
 	  Enable to set hawkbit settings at runtime.
 
+config HAWKBIT_USE_DOMAIN_NAME
+	bool "Use server_domain for domain name instead of server_addr"
+	depends on HAWKBIT_SET_SETTINGS_RUNTIME
+	help
+	  Enable to use the server_domain field for tls and http.
+
 choice HAWKBIT_DDI_SECURITY
 	prompt "hawkBit DDI API authentication modes"
 	default HAWKBIT_DDI_NO_SECURITY
