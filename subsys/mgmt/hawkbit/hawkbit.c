@@ -79,7 +79,7 @@ static struct hawkbit_config {
 	int32_t action_id;
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
 	bool server_addr_set;
-	char server_hostname[DNS_MAX_NAME_SIZE + 1];
+	char server_hostname[CONFIG_DNS_RESOLVER_MAX_QUERY_LEN + 1];
 	bool server_hostname_set;
 	char server_addr[INET6_ADDRSTRLEN];
 	char server_port[sizeof(STRINGIFY(__UINT16_MAX__))];
@@ -817,8 +817,8 @@ int hawkbit_set_config(struct hawkbit_runtime_config *config)
 		}
 		if (config->server_hostname != NULL) {
 			hb_cfg.server_hostname_set = true;
-			length = strnlen(config->server_hostname, DNS_MAX_NAME_SIZE + 1);
-			if (length > DNS_MAX_NAME_SIZE) {
+			length = strnlen(config->server_hostname, CONFIG_DNS_RESOLVER_MAX_QUERY_LEN + 1);
+			if (length > CONFIG_DNS_RESOLVER_MAX_QUERY_LEN) {
 				LOG_ERR("%s too long: %s", "hawkbit/server_hostname",
 					config->server_hostname);
 				return -EINVAL;
