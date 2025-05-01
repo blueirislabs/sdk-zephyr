@@ -32,7 +32,7 @@ static bool hawkbit_get_device_identity_default(char *id, int id_max_len)
 	length = bin2hex(hwinfo_id, (size_t)length, id, id_max_len);
 
 	return length > 0;
-#else /* CONFIG_HAWKBIT_HWINFO_DEVICE_ID */
+#else  /* CONFIG_HAWKBIT_HWINFO_DEVICE_ID */
 	ARG_UNUSED(id);
 	ARG_UNUSED(id_max_len);
 

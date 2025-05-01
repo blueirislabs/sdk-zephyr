@@ -108,7 +108,7 @@ int main(void)
 	}
 
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
-	hawkbit_set_server_addr(CONFIG_HAWKBIT_SERVER);
+	hawkbit_set_server_hostname(CONFIG_HAWKBIT_SERVER);
 	hawkbit_set_server_port(CONFIG_HAWKBIT_PORT);
 #endif
 

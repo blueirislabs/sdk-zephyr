@@ -39,13 +39,13 @@
 
 LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 
-#define RECV_BUFFER_SIZE 640
-#define URL_BUFFER_SIZE 300
-#define SHA256_HASH_SIZE 32
-#define RESPONSE_BUFFER_SIZE 1100
-#define DDI_SECURITY_TOKEN_SIZE 32
-#define RANGE_HEADER_SIZE 50
-#define HAWKBIT_RECV_TIMEOUT (300 * MSEC_PER_SEC)
+#define RECV_BUFFER_SIZE           640
+#define URL_BUFFER_SIZE            300
+#define SHA256_HASH_SIZE           32
+#define RESPONSE_BUFFER_SIZE       1100
+#define DDI_SECURITY_TOKEN_SIZE    32
+#define RANGE_HEADER_SIZE          50
+#define HAWKBIT_RECV_TIMEOUT       (300 * MSEC_PER_SEC)
 #define HAWKBIT_SET_SERVER_TIMEOUT K_MSEC(300)
 
 #define HAWKBIT_JSON_URL "/" CONFIG_HAWKBIT_TENANT "/controller/v1"
@@ -53,7 +53,7 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #define HTTP_HEADER_CONTENT_TYPE_JSON "application/json;charset=UTF-8"
 
 #define SLOT1_LABEL slot1_partition
-#define SLOT1_SIZE FIXED_PARTITION_SIZE(SLOT1_LABEL)
+#define SLOT1_SIZE  FIXED_PARTITION_SIZE(SLOT1_LABEL)
 
 static uint32_t poll_sleep = (CONFIG_HAWKBIT_POLL_INTERVAL * SEC_PER_MIN);
 
@@ -78,7 +78,10 @@ static bool hawkbit_initialized;
 static struct hawkbit_config {
 	int32_t action_id;
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
-	char server_addr[DNS_MAX_NAME_SIZE + 1];
+	bool server_addr_set;
+	char server_hostname[DNS_MAX_NAME_SIZE + 1];
+	bool server_hostname_set;
+	char server_addr[INET6_ADDRSTRLEN];
 	char server_port[sizeof(STRINGIFY(__UINT16_MAX__))];
 #ifndef CONFIG_HAWKBIT_DDI_NO_SECURITY
 	char ddi_security_token[DDI_SECURITY_TOKEN_SIZE + 1];
@@ -90,12 +93,12 @@ static struct hawkbit_config {
 } hb_cfg;
 
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
-#define HAWKBIT_SERVER hb_cfg.server_addr
-#define HAWKBIT_PORT hb_cfg.server_port
+#define HAWKBIT_SERVER   hb_cfg.server_hostname
+#define HAWKBIT_PORT     hb_cfg.server_port
 #define HAWKBIT_PORT_INT atoi(hb_cfg.server_port)
 #else
-#define HAWKBIT_SERVER CONFIG_HAWKBIT_SERVER
-#define HAWKBIT_PORT STRINGIFY(CONFIG_HAWKBIT_PORT)
+#define HAWKBIT_SERVER   CONFIG_HAWKBIT_SERVER
+#define HAWKBIT_PORT     STRINGIFY(CONFIG_HAWKBIT_PORT)
 #define HAWKBIT_PORT_INT CONFIG_HAWKBIT_PORT
 #endif /* CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME */
 
@@ -143,7 +146,7 @@ struct hawkbit_context {
 struct s_object {
 	struct smf_ctx ctx;
 	struct hawkbit_context hb_context;
-	char device_id[DEVICE_ID_HEX_MAX_SIZE];
+	char controller_id[DEVICE_ID_HEX_MAX_SIZE];
 };
 
 static const struct smf_state hawkbit_states[];
@@ -160,8 +163,8 @@ enum hawkbit_state {
 	S_HAWKBIT_TERMINATE,
 };
 
-int hawkbit_default_config_data_cb(const char *device_id, uint8_t *buffer,
-			      const size_t buffer_size);
+int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
+				   const size_t buffer_size);
 
 static hawkbit_config_device_data_cb_handler_t hawkbit_config_device_data_cb_handler =
 	hawkbit_default_config_data_cb;
@@ -298,6 +301,20 @@ static int hawkbit_settings_set(const char *name, size_t len, settings_read_cb r
 		return rc;
 	}
 
+	if (settings_name_steq(name, "server_hostname", &next) && !next) {
+		if (len != sizeof(hb_cfg.server_hostname)) {
+			return -EINVAL;
+		}
+
+		rc = read_cb(cb_arg, &hb_cfg.server_hostname, sizeof(hb_cfg.server_hostname));
+		LOG_DBG("<%s> = %s", "hawkbit/server_hostname", hb_cfg.server_hostname);
+		if (rc >= 0) {
+			return 0;
+		}
+
+		return rc;
+	}
+
 	if (settings_name_steq(name, "server_port", &next) && !next) {
 		if (len != sizeof(uint16_t)) {
 			return -EINVAL;
@@ -336,6 +353,7 @@ static int hawkbit_settings_set(const char *name, size_t len, settings_read_cb r
 	}
 #else  /* CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME */
 	if (settings_name_steq(name, "server_addr", NULL) ||
+	if (settings_name_steq(name, "server_hostname", NULL) ||
 	    settings_name_steq(name, "server_port", NULL) ||
 	    settings_name_steq(name, "ddi_token", NULL)) {
 		rc = read_cb(cb_arg, NULL, 0);
@@ -359,6 +377,8 @@ static int hawkbit_settings_export(int (*cb)(const char *name, const void *value
 	(void)cb("hawkbit/action_id", &hb_cfg.action_id, sizeof(hb_cfg.action_id));
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
 	(void)cb("hawkbit/server_addr", &hb_cfg.server_addr, sizeof(hb_cfg.server_addr));
+	(void)cb("hawkbit/server_hostname", &hb_cfg.server_hostname,
+		 sizeof(hb_cfg.server_hostname));
 	uint16_t hawkbit_port = atoi(hb_cfg.server_port);
 	(void)cb("hawkbit/server_port", &hawkbit_port, sizeof(hawkbit_port));
 #ifndef CONFIG_HAWKBIT_DDI_NO_SECURITY
@@ -430,6 +450,10 @@ static bool start_http_client(int *hb_sock)
 	int resolve_attempts = 10;
 	int protocol = IS_ENABLED(CONFIG_HAWKBIT_USE_TLS) ? IPPROTO_TLS_1_2 : IPPROTO_TCP;
 
+	if (!hb_cfg.server_hostname_set) {
+		return -EINVAL;
+	}
+
 	if (IS_ENABLED(CONFIG_NET_IPV6)) {
 		hints.ai_family = AF_INET6;
 		hints.ai_socktype = SOCK_STREAM;
@@ -439,7 +463,11 @@ static bool start_http_client(int *hb_sock)
 	}
 
 	while (resolve_attempts--) {
-		ret = zsock_getaddrinfo(HAWKBIT_SERVER, HAWKBIT_PORT, &hints, &addr);
+		if (hb_cfg.server_addr_set) {
+			ret = zsock_getaddrinfo(hb_cfg.server_addr, HAWKBIT_PORT, &hints, &addr);
+		} else {
+			ret = zsock_getaddrinfo(HAWKBIT_SERVER, HAWKBIT_PORT, &hints, &addr);
+		}
 		if (ret == 0) {
 			break;
 		}
@@ -626,8 +654,7 @@ static char *hawkbit_get_url(const char *href)
 /*
  * Find URL component for the device cancel action id
  */
-static int hawkbit_find_cancel_action_id(struct hawkbit_ctl_res *res,
-					  int32_t *cancel_action_id)
+static int hawkbit_find_cancel_action_id(struct hawkbit_ctl_res *res, int32_t *cancel_action_id)
 {
 	char *helper;
 
@@ -764,11 +791,12 @@ int hawkbit_set_custom_data_cb(hawkbit_config_device_data_cb_handler_t cb)
 	return -ENOTSUP;
 }
 
-int hawkbit_default_config_data_cb(const char *device_id, uint8_t *buffer, const size_t buffer_size)
+int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
+				   const size_t buffer_size)
 {
 	struct hawkbit_cfg cfg = {
 		.mode = "merge",
-		.data.VIN = device_id,
+		.data.VIN = controller_id,
 	};
 
 	return json_obj_encode_buf(json_cfg_descr, ARRAY_SIZE(json_cfg_descr), &cfg, buffer,
@@ -778,11 +806,26 @@ int hawkbit_default_config_data_cb(const char *device_id, uint8_t *buffer, const
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
 int hawkbit_set_config(struct hawkbit_runtime_config *config)
 {
+	size_t length;
+
 	if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
 		if (config->server_addr != NULL) {
+			hb_cfg.server_addr_set = true;
 			strncpy(hb_cfg.server_addr, config->server_addr,
 				sizeof(hb_cfg.server_addr));
 			LOG_DBG("configured %s: %s", "hawkbit/server_addr", hb_cfg.server_addr);
+		}
+		if (config->server_hostname != NULL) {
+			length = strnlen(config->server_hostname, DNS_MAX_NAME_SIZE + 1);
+			if (length > DNS_MAX_NAME_SIZE) {
+				LOG_ERR("%s too long: %s", "hawkbit/server_hostname",
+					config->server_hostname);
+				return -EINVAL;
+			}
+			strncpy(hb_cfg.server_hostname, config->server_hostname,
+				sizeof(hb_cfg.server_hostname));
+			LOG_DBG("configured %s: %s", "hawkbit/server_hostname",
+				hb_cfg.server_hostname);
 		}
 		if (config->server_port != 0) {
 			snprintf(hb_cfg.server_port, sizeof(hb_cfg.server_port), "%u",
@@ -885,12 +928,10 @@ static void response_json_cb(struct http_response *rsp, enum http_final_call fin
 		body_data = rsp->body_frag_start;
 		body_len = rsp->body_frag_len;
 
-		if ((hb_context->dl.downloaded_size + body_len) >
-			hb_context->response_data_size) {
-			hb_context->response_data_size =
-				hb_context->dl.downloaded_size + body_len;
+		if ((hb_context->dl.downloaded_size + body_len) > hb_context->response_data_size) {
+			hb_context->response_data_size = hb_context->dl.downloaded_size + body_len;
 			rsp_tmp = k_realloc(hb_context->response_data,
-						hb_context->response_data_size);
+					    hb_context->response_data_size);
 			if (rsp_tmp == NULL) {
 				LOG_ERR("Failed to realloc memory");
 				hb_context->code_status = HAWKBIT_ALLOC_ERROR;
@@ -899,16 +940,15 @@ static void response_json_cb(struct http_response *rsp, enum http_final_call fin
 
 			hb_context->response_data = rsp_tmp;
 		}
-		strncpy(hb_context->response_data + hb_context->dl.downloaded_size,
-			body_data, body_len);
+		strncpy(hb_context->response_data + hb_context->dl.downloaded_size, body_data,
+			body_len);
 		hb_context->dl.downloaded_size += body_len;
 	}
 
 	if (final_data == HTTP_DATA_FINAL) {
 		if (hb_context->dl.http_content_size != hb_context->dl.downloaded_size) {
 			LOG_ERR("HTTP response len mismatch, expected %d, got %d",
-				hb_context->dl.http_content_size,
-				hb_context->dl.downloaded_size);
+				hb_context->dl.http_content_size, hb_context->dl.downloaded_size);
 			hb_context->code_status = HAWKBIT_METADATA_ERROR;
 			return;
 		}
@@ -916,19 +956,19 @@ static void response_json_cb(struct http_response *rsp, enum http_final_call fin
 		hb_context->response_data[hb_context->dl.downloaded_size] = '\0';
 		memset(&hb_context->results, 0, sizeof(hb_context->results));
 		if (hb_context->type == HAWKBIT_PROBE) {
-			ret = json_obj_parse(
-				hb_context->response_data, hb_context->dl.downloaded_size,
-				json_ctl_res_descr, ARRAY_SIZE(json_ctl_res_descr),
-				&hb_context->results.base);
+			ret = json_obj_parse(hb_context->response_data,
+					     hb_context->dl.downloaded_size, json_ctl_res_descr,
+					     ARRAY_SIZE(json_ctl_res_descr),
+					     &hb_context->results.base);
 			if (ret < 0) {
 				LOG_ERR("JSON parse error (%s): %d", "HAWKBIT_PROBE", ret);
 				hb_context->code_status = HAWKBIT_METADATA_ERROR;
 			}
 		} else {
-			ret = json_obj_parse(
-				hb_context->response_data, hb_context->dl.downloaded_size,
-				json_dep_res_descr, ARRAY_SIZE(json_dep_res_descr),
-				&hb_context->results.dep);
+			ret = json_obj_parse(hb_context->response_data,
+					     hb_context->dl.downloaded_size, json_dep_res_descr,
+					     ARRAY_SIZE(json_dep_res_descr),
+					     &hb_context->results.dep);
 			if (ret < 0) {
 				LOG_ERR("JSON parse error (%s): %d", "deploymentBase", ret);
 				hb_context->code_status = HAWKBIT_METADATA_ERROR;
@@ -1157,9 +1197,9 @@ static bool check_hawkbit_server(void)
 {
 	if (strlen(HAWKBIT_SERVER) == 0) {
 		if (sizeof(CONFIG_HAWKBIT_SERVER) > 1) {
-			hawkbit_set_server_addr(CONFIG_HAWKBIT_SERVER);
+			hawkbit_set_server_hostname(CONFIG_HAWKBIT_SERVER);
 		} else {
-			LOG_ERR("no valid %s found", "hawkbit/server_addr");
+			LOG_ERR("no valid %s found", "hawkbit/server_hostname");
 			return false;
 		}
 	}
@@ -1214,7 +1254,7 @@ static void s_start(void *o)
 		return;
 	}
 
-	if (!hawkbit_get_device_identity(s->device_id, DEVICE_ID_HEX_MAX_SIZE)) {
+	if (!hawkbit_get_device_identity(s->controller_id, DEVICE_ID_HEX_MAX_SIZE)) {
 		k_sem_give(&probe_sem);
 		smf_set_terminate(SMF_CTX(s), HAWKBIT_METADATA_ERROR);
 		return;
@@ -1265,8 +1305,7 @@ static void s_probe(void *o)
 
 	LOG_INF("Polling target data from hawkBit");
 
-	snprintk(url_buffer, sizeof(url_buffer), "%s/%s-%s", HAWKBIT_JSON_URL, CONFIG_BOARD,
-		 s->device_id);
+	snprintk(url_buffer, sizeof(url_buffer), "%s/%s", HAWKBIT_JSON_URL, s->controller_id);
 
 	if (!send_request(&s->hb_context, HAWKBIT_PROBE, url_buffer, NULL)) {
 		LOG_ERR("Send request failed (%s)", "HAWKBIT_PROBE");
@@ -1380,7 +1419,7 @@ static void s_config_device(void *o)
 		return;
 	}
 
-	ret = hawkbit_config_device_data_cb_handler(s->device_id, status_buffer,
+	ret = hawkbit_config_device_data_cb_handler(s->controller_id, status_buffer,
 						    sizeof(status_buffer));
 	if (ret) {
 		LOG_ERR("Can't encode the JSON script (%s): %d", "HAWKBIT_CONFIG_DEVICE", ret);
@@ -1456,9 +1495,8 @@ static void s_report(void *o)
 	uint8_t status_buffer[CONFIG_HAWKBIT_STATUS_BUFFER_SIZE] = {0};
 	char url_buffer[URL_BUFFER_SIZE] = {0};
 
-	snprintk(url_buffer, sizeof(url_buffer), "%s/%s-%s/%s/%d/%s", HAWKBIT_JSON_URL,
-		 CONFIG_BOARD, s->device_id, "deploymentBase", s->hb_context.json_action_id,
-		 "feedback");
+	snprintk(url_buffer, sizeof(url_buffer), "%s/%s/%s/%d/%s", HAWKBIT_JSON_URL,
+		 s->controller_id, "deploymentBase", s->hb_context.json_action_id, "feedback");
 
 	LOG_INF("Reporting deployment feedback %s (%s) for action %d",
 		feedback.status.result.finished, feedback.status.execution,
