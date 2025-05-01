@@ -44,7 +44,7 @@ enum dns_query_type {
 
 /** Max size of the resolved name. */
 #ifndef DNS_MAX_NAME_SIZE
-#define DNS_MAX_NAME_SIZE 20
+#define DNS_MAX_NAME_SIZE 32
 #endif
 
 /** @cond INTERNAL_HIDDEN */
