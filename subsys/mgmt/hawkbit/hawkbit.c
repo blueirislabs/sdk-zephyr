@@ -78,10 +78,10 @@ static bool hawkbit_initialized;
 static struct hawkbit_config {
 	int32_t action_id;
 #ifdef CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME
-	char server_addr[DNS_MAX_NAME_SIZE + 1];
+	char server_addr[CONFIG_DNS_RESOLVER_MAX_QUERY_LEN + 1];
 #ifdef CONFIG_HAWKBIT_USE_DOMAIN_NAME
 	char server_domain[CONFIG_DNS_RESOLVER_MAX_QUERY_LEN + 1];
-#endif
+#endif	
 	char server_port[sizeof(STRINGIFY(__UINT16_MAX__))];
 #ifndef CONFIG_HAWKBIT_DDI_NO_SECURITY
 	char ddi_security_token[DDI_SECURITY_TOKEN_SIZE + 1];
@@ -796,8 +796,7 @@ int hawkbit_set_custom_data_cb(hawkbit_config_device_data_cb_handler_t cb)
 	return -ENOTSUP;
 }
 
-int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer,
-				const size_t buffer_size)
+int hawkbit_default_config_data_cb(const char *controller_id, uint8_t *buffer, const size_t buffer_size)
 {
 	struct hawkbit_cfg cfg = {
 		.mode = "merge",
@@ -813,8 +812,14 @@ int hawkbit_set_config(struct hawkbit_runtime_config *config)
 {
 	size_t length;
 
-  if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
+	if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
 		if (config->server_addr != NULL) {
+			length = strnlen(config->server_addr, CONFIG_DNS_RESOLVER_MAX_QUERY_LEN + 1);
+			if (length > CONFIG_DNS_RESOLVER_MAX_QUERY_LEN) {
+				LOG_ERR("%s too long: %s", "hawkbit/server_addr",
+					config->server_addr);
+				return -EINVAL;
+			}
 			strncpy(hb_cfg.server_addr, config->server_addr,
 				sizeof(hb_cfg.server_addr));
 			LOG_DBG("configured %s: %s", "hawkbit/server_addr", hb_cfg.server_addr);

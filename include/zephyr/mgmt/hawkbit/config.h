@@ -48,6 +48,7 @@ struct hawkbit_runtime_config {
  * @retval 0 on success.
  * @retval -EINVAL if string length mismatch for server_domain
  * @retval -EAGAIN if probe is currently running.
+ * @retval -EINVAL if config->server_addr is too long.
  */
 int hawkbit_set_config(struct hawkbit_runtime_config *config);
 
@@ -87,6 +88,7 @@ static inline int hawkbit_set_server_domain(char *domain_str)
  * @param addr_str Server address to set.
  * @retval 0 on success.
  * @retval -EAGAIN if probe is currently running.
+ * @retval -EINVAL if config->server_addr is too long.
  */
 static inline int hawkbit_set_server_addr(char *addr_str)
 {
